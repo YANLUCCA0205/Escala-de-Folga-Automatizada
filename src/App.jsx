@@ -1,9 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════
-//  ESCALA DE FOLGAS — v4.0
-//  npm install xlsx
+//  ESCALA DE FOLGAS — v5.0
+//  npm install xlsx @supabase/supabase-js
 // ═══════════════════════════════════════════════════════════════════
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
+import { createClient } from "@supabase/supabase-js";
+
+// ───────────────────────────────────────────────────────────────────
+// SUPABASE
+// ───────────────────────────────────────────────────────────────────
+const SUPA_URL = "https://jvvjhcfqvitnxdutfije.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2dmpoY2Zxdml0bnhkdXRmaWplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjk5ODksImV4cCI6MjA5NTQwNTk4OX0.aJJX3kP1jgVaK1mtiwZ5bZzNxSSxtm4cDb1ducx3Jvk";
+const sb = createClient(SUPA_URL, SUPA_KEY);
 
 // ───────────────────────────────────────────────────────────────────
 // UTILITÁRIOS
@@ -21,39 +29,25 @@ const garantirCfg = (cfgUnidades, unidades) => {
   return novo;
 };
 
-// Parseia a coluna FOLGAS do CSV
-// Retorna { tipo: "6x1_dom" | "5x1" | "6x1_flex", diasFlex: ["SAB","DOM","SEG",...] }
 const parseRegimeFolga = (str = "") => {
   const s = str.toUpperCase().trim();
   if (!s) return { tipo: "6x1_dom", diasFlex: ["DOM"] };
-
-  // Extrai dias entre parênteses, ex: "(SAB/DOM/SEG)" → ["SAB","DOM","SEG"]
   const match = s.match(/\(([^)]+)\)/);
   const diasRaw = match ? match[1].split("/").map((d) => d.trim()).filter(Boolean) : [];
-
   if (s.startsWith("5X1")) return { tipo: "5x1", diasFlex: [] };
-
-  // 6X1 com apenas DOM → sempre domingo
   if (diasRaw.length === 1 && diasRaw[0] === "DOM") return { tipo: "6x1_dom", diasFlex: ["DOM"] };
-
-  // 6X1 com múltiplos dias (SAB/DOM, DOM/SEG, SAB/DOM/SEG etc.) → flex
   if (diasRaw.length >= 2) return { tipo: "6x1_flex", diasFlex: diasRaw };
-
-  // fallback
   return { tipo: "6x1_dom", diasFlex: ["DOM"] };
 };
 
-// Converte nome do dia para número getDay() 0=Dom, 1=Seg ... 6=Sab
 const DIAS_DOW = { DOM: 0, SEG: 1, TER: 2, QUA: 3, QUI: 4, SEX: 5, SAB: 6 };
 const DIAS7    = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-
 const SETORES_ORDEM = [
   "CAIXA","CAIXA/PACOTE","CAIXA/LANCHONETE","REPOSIÇÃO","AÇOUGUE","PADARIA",
   "HORTIFRUTI","LIMPEZA","DEPÓSITO","FRIOS","ESTOQUE","ENTREGA",
   "ADMINISTRATIVO OPERACIONAL","ADMINISTRATIVO","ADM","COMERCIAL","MARKETING",
-  "FINANCEIRO","RH/ DP","RH / DP","ADMINISTRATIVO ","CONTÁBIL FISCAL",
-  "TI","PREVENÇÃO DE PERDAS","PREVENÇÃO P.",
+  "FINANCEIRO","RH/ DP","RH / DP","CONTÁBIL FISCAL","TI","PREVENÇÃO DE PERDAS","PREVENÇÃO P.",
 ];
 
 // ───────────────────────────────────────────────────────────────────
@@ -100,7 +94,7 @@ class FuncionarioModel {
     this.funcao      = (funcao || "").trim();
     this.turno       = (turno  || "").trim();
     this.unidade     = unidade.trim();
-    this.regimeFolga = regimeFolga; // { tipo, diasFlex }
+    this.regimeFolga = regimeFolga;
     this.ferias      = null;
     this.cargoVago   = false;
     this._escProvisoria = {};
@@ -108,60 +102,34 @@ class FuncionarioModel {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// GERADORES DE ESCALA POR REGIME
+// GERADORES DE ESCALA
 // ───────────────────────────────────────────────────────────────────
-
-/**
- * 6X1 (DOM) — Folga sempre no domingo
- */
 function gerarEscala6x1Dom(func, cfg) {
   const e = {};
-  for (let d = 1; d <= cfg.dias; d++) {
-    e[d] = cfg.getDow(d) === 0 ? "F" : "T";
-  }
+  for (let d = 1; d <= cfg.dias; d++) e[d] = cfg.getDow(d) === 0 ? "F" : "T";
   return e;
 }
 
-/**
- * 5X1 — Trabalha 5, folga 1, regressivo.
- * O offset é baseado no índice do funcionário dentro do grupo para distribuir as folgas.
- */
 function gerarEscala5x1(func, idx, cfg) {
   const e = {};
-  // offset escalonado: cada funcionário começa em um ponto diferente do ciclo
-  const offset = (idx * 1) % 6; // ciclo de 6 (5 trabalhando + 1 folga)
+  const offset = (idx * 1) % 6;
   for (let d = 1; d <= cfg.dias; d++) {
     const pos = (d - 1 + offset) % 6;
-    e[d] = pos === 5 ? "F" : "T"; // o 6º dia do ciclo é folga
+    e[d] = pos === 5 ? "F" : "T";
   }
   return e;
 }
 
-/**
- * 6X1 flex — Folga 1 dia por semana, escolhido entre os diasFlex permitidos.
- * Distribui entre os colegas do mesmo grupo para garantir cobertura mínima.
- * Lógica: cada semana, escolhe o dia flex que tem MAIS colegas trabalhando
- * (priorizando cobertura), com rotação baseada no índice do funcionário.
- */
 function gerarEscala6x1Flex(func, idx, grupo, cfg) {
   const e = {};
   const dowsPermitidos = func.regimeFolga.diasFlex
     .map((d) => DIAS_DOW[d])
     .filter((n) => n !== undefined);
-
-  if (dowsPermitidos.length === 0) {
-    // fallback para domingo
-    return gerarEscala6x1Dom(func, cfg);
-  }
-
-  // Para cada semana, decide qual dia de folga usar
-  // Rotaciona pelo índice para distribuir entre colegas
+  if (dowsPermitidos.length === 0) return gerarEscala6x1Dom(func, cfg);
   let semana = 0;
   for (let d = 1; d <= cfg.dias; d++) {
     const dow = cfg.getDow(d);
     if (dowsPermitidos.includes(dow)) {
-      // É um candidato a folga nesta semana
-      // Qual semana estamos? (conta quantas vezes passamos por um DOM)
       const dowEscolhido = dowsPermitidos[(semana + idx) % dowsPermitidos.length];
       e[d] = dow === dowEscolhido ? "F" : "T";
       if (dow === dowsPermitidos[dowsPermitidos.length - 1]) semana++;
@@ -169,18 +137,15 @@ function gerarEscala6x1Flex(func, idx, grupo, cfg) {
       e[d] = "T";
     }
   }
-
-  // Garante que o funcionário tenha exatamente ~4 folgas num mês de 31 dias (1/7)
   return e;
 }
 
-// Dispatcher principal
 function gerarEscalaFuncionario(func, idx, grupo, cfg) {
   const { tipo } = func.regimeFolga;
   if (tipo === "6x1_dom")  return gerarEscala6x1Dom(func, cfg);
   if (tipo === "5x1")      return gerarEscala5x1(func, idx, cfg);
   if (tipo === "6x1_flex") return gerarEscala6x1Flex(func, idx, grupo, cfg);
-  return gerarEscala6x1Dom(func, cfg); // fallback
+  return gerarEscala6x1Dom(func, cfg);
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -230,11 +195,8 @@ class TrocaEngine {
   static sugerir({ funcAlvo, diaAlvo, funcionarios, escala, config }) {
     return funcionarios
       .filter((f) =>
-        f.id !== funcAlvo.id &&
-        f.setor === funcAlvo.setor &&
-        f.unidade === funcAlvo.unidade &&
-        !f.ferias && !f.cargoVago &&
-        (escala[f.id]?.[diaAlvo] || "T") === "T"
+        f.id !== funcAlvo.id && f.setor === funcAlvo.setor && f.unidade === funcAlvo.unidade &&
+        !f.ferias && !f.cargoVago && (escala[f.id]?.[diaAlvo] || "T") === "T"
       )
       .map((c) => {
         const par = Object.entries(escala[c.id] || {}).find(([d, v]) => v === "F" && Number(d) !== diaAlvo);
@@ -255,9 +217,96 @@ class TrocaEngine {
 }
 
 // ───────────────────────────────────────────────────────────────────
+// TELA DE LOGIN
+// ───────────────────────────────────────────────────────────────────
+function TelaLogin({ onLogin }) {
+  const [email,    setEmail]    = useState("");
+  const [senha,    setSenha]    = useState("");
+  const [erro,     setErro]     = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [modo,     setModo]     = useState("login"); // "login" | "cadastro"
+
+  const submeter = async () => {
+    setErro(""); setLoading(true);
+    try {
+      let res;
+      if (modo === "login") {
+        res = await sb.auth.signInWithPassword({ email, password: senha });
+      } else {
+        res = await sb.auth.signUp({ email, password: senha });
+        if (!res.error) {
+          setErro("Conta criada! Verifique seu e-mail para confirmar e depois faça login.");
+          setModo("login"); setLoading(false); return;
+        }
+      }
+      if (res.error) { setErro(res.error.message); }
+      else { onLogin(res.data.session); }
+    } catch (e) {
+      setErro(String(e));
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Arial, sans-serif" }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: "2.5rem 2rem", width: 360, boxShadow: "0 4px 24px rgba(0,0,0,.12)" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⬛</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#111" }}>Escala de Folgas</div>
+          <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Sistema de Gestão · União Supermercados</div>
+        </div>
+
+        <div style={{ display: "flex", gap: 0, marginBottom: 20, border: "1px solid #e5e7eb", borderRadius: 7, overflow: "hidden" }}>
+          {[["login","Entrar"],["cadastro","Criar conta"]].map(([m, label]) => (
+            <button key={m} onClick={() => { setModo(m); setErro(""); }}
+              style={{ flex: 1, padding: "8px 0", fontSize: 12, border: "none", cursor: "pointer",
+                background: modo === m ? "#111" : "#f9fafb", color: modo === m ? "#fff" : "#555", fontWeight: modo === m ? 700 : 400 }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={{ fontSize: 11, color: "#555", display: "block", marginBottom: 4 }}>E-mail</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submeter()}
+              placeholder="seu@email.com"
+              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d1d5db", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 11, color: "#555", display: "block", marginBottom: 4 }}>Senha</label>
+            <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submeter()}
+              placeholder="••••••••"
+              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d1d5db", boxSizing: "border-box" }} />
+          </div>
+          {erro && (
+            <div style={{ fontSize: 11, color: erro.includes("criada") ? "#166534" : "#CC0000",
+              background: erro.includes("criada") ? "#f0fdf4" : "#fef2f2",
+              border: `1px solid ${erro.includes("criada") ? "#bbf7d0" : "#fecaca"}`,
+              borderRadius: 5, padding: "8px 10px" }}>
+              {erro}
+            </div>
+          )}
+          <button onClick={submeter} disabled={loading || !email || !senha}
+            style={{ padding: "10px 0", borderRadius: 6, border: "none", background: "#111", color: "#fff",
+              fontSize: 13, fontWeight: 700, cursor: loading ? "wait" : "pointer", opacity: (!email || !senha) ? 0.5 : 1, marginTop: 4 }}>
+            {loading ? "Aguarde..." : modo === "login" ? "Entrar" : "Criar conta"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
 // COMPONENTE PRINCIPAL
 // ───────────────────────────────────────────────────────────────────
 export default function EscalaFolga() {
+  const [sessao,         setSessao]         = useState(null);
+  const [authCarregando, setAuthCarregando] = useState(true);
+
   const [funcionarios,   setFuncionarios]   = useState([]);
   const [escala,         setEscala]         = useState({});
   const [intervalos,     setIntervalos]     = useState({});
@@ -271,14 +320,128 @@ export default function EscalaFolga() {
   const [filtroTurno,    setFiltroTurno]    = useState("");
   const [feriasModal,    setFeriasModal]    = useState(null);
   const [cfgUnidades,    setCfgUnidades]    = useState({});
+  const [salvando,       setSalvando]       = useState(false);
+  const [salvouOk,       setSalvouOk]       = useState(false);
+  const [carregandoDB,   setCarregandoDB]   = useState(false);
+  const salvarTimer = useRef(null);
 
+  // ── chave do mês ────────────────────────────────────────────────
+  const mesKey = useMemo(() => dataInicio.slice(0, 7), [dataInicio]); // "2026-05"
+
+  // ── auth ────────────────────────────────────────────────────────
+  useEffect(() => {
+    sb.auth.getSession().then(({ data }) => {
+      setSessao(data.session);
+      setAuthCarregando(false);
+    });
+    const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => setSessao(s));
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── carregar dados ao logar ou mudar mês ──────────────────────
+  useEffect(() => {
+    if (!sessao) return;
+    carregarDados();
+  }, [sessao, mesKey]);
+
+  const carregarDados = async () => {
+    setCarregandoDB(true);
+    try {
+      // Configs
+      const { data: cfgRows } = await sb
+        .from("configuracoes")
+        .select("unidade, dados")
+        .eq("mes", mesKey);
+
+      if (cfgRows?.length) {
+        const novas = {};
+        cfgRows.forEach((r) => { novas[r.unidade] = r.dados; });
+        setCfgUnidades(novas);
+      }
+
+      // Escala salva (folgas manuais + férias)
+      const { data: escRows } = await sb
+        .from("escalas")
+        .select("unidade, escala, intervalos, ferias")
+        .eq("mes", mesKey);
+
+      if (escRows?.length) {
+        // Mescla escalas de todas as unidades
+        let escMerge = {}, intMerge = {};
+        const feriasPorFunc = {};
+        escRows.forEach((r) => {
+          Object.assign(escMerge, r.escala || {});
+          Object.assign(intMerge, r.intervalos || {});
+          Object.assign(feriasPorFunc, r.ferias || {});
+        });
+        setEscala(escMerge);
+        setIntervalos(intMerge);
+        // Aplica férias nos funcionários se já carregados
+        if (Object.keys(feriasPorFunc).length) {
+          setFuncionarios((prev) => prev.map((f) => ({
+            ...f,
+            ferias: feriasPorFunc[f.id] || f.ferias,
+          })));
+        }
+      }
+    } catch (e) {
+      console.error("Erro ao carregar dados:", e);
+    }
+    setCarregandoDB(false);
+  };
+
+  // ── salvar no Supabase (debounced 1.5s) ─────────────────────────
+  const salvarSupabase = useCallback((novaEscala, novosIntervalos, novasCfgs, novosFuncs) => {
+    if (salvarTimer.current) clearTimeout(salvarTimer.current);
+    salvarTimer.current = setTimeout(async () => {
+      setSalvando(true);
+      try {
+        const lojas = [...new Set((novosFuncs || funcionarios).map((f) => f.unidade))];
+
+        // Salvar configs por loja
+        for (const loja of lojas) {
+          if (!(novasCfgs || cfgUnidades)[loja]) continue;
+          await sb.from("configuracoes").upsert({
+            unidade: loja, mes: mesKey,
+            dados: (novasCfgs || cfgUnidades)[loja],
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "unidade,mes" });
+        }
+
+        // Salvar escala por loja
+        for (const loja of lojas) {
+          const funcsLoja = (novosFuncs || funcionarios).filter((f) => f.unidade === loja);
+          const escLoja   = {};
+          const ferLoja   = {};
+          funcsLoja.forEach((f) => {
+            escLoja[f.id] = (novaEscala || escala)[f.id] || {};
+            if (f.ferias) ferLoja[f.id] = f.ferias;
+          });
+          await sb.from("escalas").upsert({
+            unidade: loja, mes: mesKey,
+            escala: escLoja,
+            intervalos: novosIntervalos || intervalos,
+            ferias: ferLoja,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: "unidade,mes" });
+        }
+
+        setSalvouOk(true);
+        setTimeout(() => setSalvouOk(false), 2500);
+      } catch (e) {
+        console.error("Erro ao salvar:", e);
+      }
+      setSalvando(false);
+    }, 1500);
+  }, [funcionarios, escala, intervalos, cfgUnidades, mesKey]);
+
+  // ── config ───────────────────────────────────────────────────────
   const config = useMemo(() => {
     const unidades = garantirCfg(cfgUnidades, funcionarios.map((f) => f.unidade));
     return new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades });
   }, [dataInicio, diasNum, cfgUnidades, funcionarios]);
 
   // ── importar CSV ────────────────────────────────────────────────
-  // Colunas: Nº, LOJA, SETOR, FUNÇÃO, TURNO, NOME, FOLGAS
   const importarCSV = (e) => {
     const arquivo = e.target.files[0];
     if (!arquivo) return;
@@ -290,14 +453,12 @@ export default function EscalaFolga() {
         const dec = new TextDecoder("utf-8", { fatal: true });
         texto = dec.decode(buffer);
         if (texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1);
-      } catch {
-        texto = new TextDecoder("windows-1252").decode(buffer);
-      }
+      } catch { texto = new TextDecoder("windows-1252").decode(buffer); }
+
       const sep    = texto.includes(";") ? ";" : ",";
       const linhas = texto.split("\n").filter((l) => l.trim());
       const dados  = linhas.slice(1).map((linha) => {
         const c = linha.split(sep).map((x) => x.trim().replace(/^"|"$/g, ""));
-        // c[0]=Nº  c[1]=LOJA  c[2]=SETOR  c[3]=FUNÇÃO  c[4]=TURNO  c[5]=NOME  c[6]=FOLGAS
         const num    = c[0] || "";
         const loja   = c[1] ? `LOJA ${c[1].trim()}` : "LOJA 1";
         const setor  = (c[2] || "GERAL").trim().toUpperCase();
@@ -305,15 +466,11 @@ export default function EscalaFolga() {
         const turno  = (c[4] || "").trim().toUpperCase();
         const nome   = (c[5] || "").trim();
         const folgas = (c[6] || "").trim();
-
         if (!nome) return null;
-
         const regime = parseRegimeFolga(folgas);
         const f = new FuncionarioModel({
-          id: num || String(Math.random()),
-          nome, setor, funcao, turno,
-          unidade: loja,
-          regimeFolga: regime,
+          id: num || String(Math.random()), nome, setor, funcao, turno,
+          unidade: loja, regimeFolga: regime,
         });
         f.cargoVago = nome.toUpperCase().includes("CARGO VAGO");
         return f;
@@ -322,25 +479,24 @@ export default function EscalaFolga() {
       const novasCfgs = garantirCfg(cfgUnidades, dados.map((f) => f.unidade));
       setCfgUnidades(novasCfgs);
       setFuncionarios(dados);
-      gerarEscala(dados, new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs }));
+      const novaEscala = calcularEscala(dados, new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs }));
+      setEscala(novaEscala);
+      salvarSupabase(novaEscala, intervalos, novasCfgs, dados);
     };
     leitor.readAsArrayBuffer(arquivo);
   };
 
-  // ── gerar escala ────────────────────────────────────────────────
-  const gerarEscala = useCallback((lista, cfg) => {
+  // ── calcular escala (puro, retorna objeto) ────────────────────
+  const calcularEscala = (lista, cfg) => {
     const nova = {};
     const grupos = {};
     lista.forEach((f) => {
       const k = `${f.unidade}||${f.setor}`;
       (grupos[k] = grupos[k] || []).push(f);
     });
-
     Object.values(grupos).forEach((grupo) => {
       grupo.forEach((func, idx) => {
         if (func.cargoVago) { nova[func.id] = {}; return; }
-
-        // Férias
         if (func.ferias) {
           nova[func.id] = {};
           for (let d = 1; d <= cfg.dias; d++) {
@@ -350,31 +506,44 @@ export default function EscalaFolga() {
           }
           return;
         }
-
         nova[func.id] = gerarEscalaFuncionario(func, idx, grupo, cfg);
       });
     });
+    return nova;
+  };
+
+  // ── gerar escala (setState) ──────────────────────────────────────
+  const gerarEscala = useCallback((lista, cfg) => {
+    const nova = calcularEscala(lista, cfg);
     setEscala(nova);
-  }, []);
+    salvarSupabase(nova, intervalos, cfgUnidades, lista);
+  }, [intervalos, cfgUnidades, salvarSupabase]);
 
   // ── alternar célula ─────────────────────────────────────────────
   const alternar = (id, dia) => {
     const seq = { T: "F", F: "T", V: "V" };
-    setEscala((prev) => ({ ...prev, [id]: { ...prev[id], [dia]: seq[prev[id]?.[dia] || "T"] } }));
-  };
-
-  // ── intervalo domingo ───────────────────────────────────────────
-  const alternarIntervalo = (id, dia) => {
-    const key = `${id}_${dia}`;
-    setIntervalos((prev) => {
-      const cur = prev[key];
-      if (!cur) return { ...prev, [key]: "1" };
-      if (cur === "4") { const n = { ...prev }; delete n[key]; return n; }
-      return { ...prev, [key]: String(Number(cur) + 1) };
+    setEscala((prev) => {
+      const nova = { ...prev, [id]: { ...prev[id], [dia]: seq[prev[id]?.[dia] || "T"] } };
+      salvarSupabase(nova, intervalos, cfgUnidades, funcionarios);
+      return nova;
     });
   };
 
-  // ── férias ──────────────────────────────────────────────────────
+  // ── intervalo domingo ────────────────────────────────────────────
+  const alternarIntervalo = (id, dia) => {
+    const key = `${id}_${dia}`;
+    setIntervalos((prev) => {
+      let novo;
+      const cur = prev[key];
+      if (!cur) novo = { ...prev, [key]: "1" };
+      else if (cur === "4") { novo = { ...prev }; delete novo[key]; }
+      else novo = { ...prev, [key]: String(Number(cur) + 1) };
+      salvarSupabase(escala, novo, cfgUnidades, funcionarios);
+      return novo;
+    });
+  };
+
+  // ── férias ───────────────────────────────────────────────────────
   const salvarFerias = (funcId, inicio, fim) => {
     setFuncionarios((prev) => {
       const nova = prev.map((f) => {
@@ -383,30 +552,43 @@ export default function EscalaFolga() {
         upd.ferias = inicio && fim ? { inicio, fim } : null;
         return upd;
       });
-      gerarEscala(nova, config);
+      const novaEscala = calcularEscala(nova, config);
+      setEscala(novaEscala);
+      salvarSupabase(novaEscala, intervalos, cfgUnidades, nova);
       return nova;
     });
     setFeriasModal(null);
   };
 
-  // ── alertas ─────────────────────────────────────────────────────
+  // ── salvar configs ───────────────────────────────────────────────
+  const setCfgCampo = (unidade, campo, valor) => {
+    setCfgUnidades((prev) => {
+      const novas = { ...prev, [unidade]: { ...(prev[unidade] || cfgVazia()), [campo]: valor } };
+      salvarSupabase(escala, intervalos, novas, funcionarios);
+      return novas;
+    });
+  };
+
+  // ── alertas ──────────────────────────────────────────────────────
   const alertas = useMemo(() => {
     if (!funcionarios.length) return [];
     return AlertaEngine.verificar(funcionarios.filter((f) => !f.ferias && !f.cargoVago), escala, config);
   }, [funcionarios, escala, config]);
 
-  // ── troca ───────────────────────────────────────────────────────
+  // ── troca ────────────────────────────────────────────────────────
   const abrirTroca = (func, dia) => {
     setTrocaSugestoes(TrocaEngine.sugerir({ funcAlvo: func, diaAlvo: dia, funcionarios, escala, config }));
     setTrocaAlvo({ func, dia });
     setAba("troca");
   };
   const executarTroca = (candidato) => {
-    setEscala(TrocaEngine.executar({ funcAlvo: trocaAlvo.func, diaAlvo: trocaAlvo.dia, funcCandidato: candidato.funcionario, escalaAtual: escala }));
+    const novaEscala = TrocaEngine.executar({ funcAlvo: trocaAlvo.func, diaAlvo: trocaAlvo.dia, funcCandidato: candidato.funcionario, escalaAtual: escala });
+    setEscala(novaEscala);
+    salvarSupabase(novaEscala, intervalos, cfgUnidades, funcionarios);
     setAba("escala"); setTrocaAlvo(null);
   };
 
-  // ── helpers layout ──────────────────────────────────────────────
+  // ── helpers ──────────────────────────────────────────────────────
   const lojas     = useMemo(() => [...new Set(funcionarios.map((f) => f.unidade))].sort(), [funcionarios]);
   const diasLista = useMemo(() => Array.from({ length: diasNum }, (_, i) => i + 1), [diasNum]);
 
@@ -428,13 +610,6 @@ export default function EscalaFolga() {
       });
 
   const lojasFiltradas = filtroLoja ? lojas.filter((l) => l === filtroLoja) : lojas;
-
-  const setCfgCampo = (unidade, campo, valor) => {
-    setCfgUnidades((prev) => ({
-      ...prev,
-      [unidade]: { ...(prev[unidade] || cfgVazia()), [campo]: valor },
-    }));
-  };
 
   const tituloMes = useMemo(() => {
     const dt = new Date(dataInicio + "T12:00:00");
@@ -459,18 +634,11 @@ export default function EscalaFolga() {
     return inicio !== null ? { inicio, fim, span: fim - inicio + 1 } : null;
   };
 
-  // ── badge de regime ─────────────────────────────────────────────
   const badgeRegime = (func) => {
     if (!func.regimeFolga) return null;
     const { tipo, diasFlex } = func.regimeFolga;
-    const txt =
-      tipo === "5x1"      ? "5×1" :
-      tipo === "6x1_dom"  ? "6×1 Dom" :
-      `6×1 (${diasFlex.join("/")})`;
-    const bg =
-      tipo === "5x1"      ? "#1d4ed8" :
-      tipo === "6x1_dom"  ? "#166534" :
-      "#7c3aed";
+    const txt = tipo === "5x1" ? "5×1" : tipo === "6x1_dom" ? "6×1 Dom" : `6×1 (${diasFlex.join("/")})`;
+    const bg  = tipo === "5x1" ? "#1d4ed8" : tipo === "6x1_dom" ? "#166534" : "#7c3aed";
     return (
       <span style={{ fontSize: 8, fontWeight: 700, color: "#fff", background: bg, borderRadius: 3, padding: "1px 4px", marginLeft: 4, verticalAlign: "middle", whiteSpace: "nowrap" }}>
         {txt}
@@ -483,102 +651,127 @@ export default function EscalaFolga() {
   // ═══════════════════════════════════════════════════════════════
   const exportarXLSX = () => {
     if (!funcionarios.length) return;
-    const wb  = XLSX.utils.book_new();
-    const borda = (cor = "AAAAAA") => ({
-      top: { style: "thin", color: { rgb: cor } }, bottom: { style: "thin", color: { rgb: cor } },
-      left: { style: "thin", color: { rgb: cor } }, right: { style: "thin", color: { rgb: cor } },
-    });
-    const cell = (v, s) => ({ v, t: "s", s });
-    const estilo = {
-      titulo:  { font: { name: "Arial", sz: 12, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
-      setorH:  { font: { name: "Arial", sz: 9, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
-      diaH:    { font: { name: "Arial", sz: 8, bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "CCCCCC" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
-      diaHFim: { font: { name: "Arial", sz: 8, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "888888" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
-      diaHCrit:{ font: { name: "Arial", sz: 8, bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FEF3C7" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
-      nome:    { font: { name: "Arial", sz: 8 }, fill: { patternType: "none" }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-      funcao:  { font: { name: "Arial", sz: 7, color: { rgb: "666666" } }, fill: { patternType: "none" }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-      vago:    { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "DDDDDD" } }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-      folga:   { fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
-      trab:    { fill: { patternType: "none" }, border: borda() },
-      ferias:  { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
-      intNum:  { font: { name: "Arial", sz: 8, bold: true }, fill: { patternType: "none" }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
-      turnoM:  { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "1e40af" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
-      turnoT:  { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
-    };
+    try {
+      const wb = XLSX.utils.book_new();
 
-    lojas.forEach((loja) => {
-      const ws = {}, merges = [];
-      let row = 0;
-      const totalCols = 2 + diasNum; // col0=nome, col1=turno, col2..=dias
-      const set = (r, c, v) => { ws[XLSX.utils.encode_cell({ r, c })] = v; };
-      const criticos = [...config.getDiasCriticos(loja), ...config.getDiasPagamento(loja), ...config.getFeriados(loja)];
-
-      set(row, 0, cell(`${tituloMes} - ${loja}`, estilo.titulo));
-      merges.push({ s: { r: row, c: 0 }, e: { r: row, c: totalCols } });
-      row++;
-
-      setoresDaLoja(loja).forEach((setor) => {
-        // Cabeçalho setor
-        set(row, 0, cell(setor, estilo.setorH));
-        set(row, 1, cell("", estilo.setorH));
-        for (let d = 1; d <= diasNum; d++) {
-          const dow  = config.getDow(d);
-          const fim  = dow === 0 || dow === 6;
-          const crit = criticos.includes(d);
-          set(row, d + 1, cell(`${DIAS7[dow]}\n${d}`, crit ? estilo.diaHCrit : fim ? estilo.diaHFim : estilo.diaH));
-        }
-        row++;
-
-        funcsDaLoja(loja, setor, "").forEach((func) => {
-          const estiloNome = func.cargoVago ? estilo.vago : estilo.nome;
-          const turnoLabel = func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : func.turno.charAt(0);
-          const estiloTurno = func.turno === "MANHÃ" ? estilo.turnoM : estilo.turnoT;
-          set(row, 0, cell(func.cargoVago ? "CARGO VAGO" : `${func.nome}`, estiloNome));
-          set(row, 1, cell(turnoLabel, estiloTurno));
-
-          const fspan = getFeriasSpan(func);
-          if (fspan && func.ferias) {
-            for (let d = 1; d < fspan.inicio; d++) {
-              const v = escala[func.id]?.[d] || "T";
-              set(row, d + 1, cell("", v === "F" ? estilo.folga : estilo.trab));
-            }
-            set(row, fspan.inicio + 1, cell(getFeriasLabel(func), estilo.ferias));
-            if (fspan.span > 1)
-              merges.push({ s: { r: row, c: fspan.inicio + 1 }, e: { r: row, c: fspan.fim + 1 } });
-            for (let d = fspan.fim + 1; d <= diasNum; d++) {
-              const v = escala[func.id]?.[d] || "T";
-              set(row, d + 1, cell("", v === "F" ? estilo.folga : estilo.trab));
-            }
-          } else {
-            for (let d = 1; d <= diasNum; d++) {
-              const v   = escala[func.id]?.[d] || "T";
-              const dow = config.getDow(d);
-              const key = `${func.id}_${d}`;
-              const intv = intervalos[key];
-              if (v === "F") {
-                set(row, d + 1, cell("", estilo.folga));
-              } else if (dow === 0 && intv) {
-                set(row, d + 1, cell(intv, estilo.intNum));
-              } else {
-                set(row, d + 1, cell("", estilo.trab));
-              }
-            }
-          }
-          row++;
-        });
+      const borda = (cor = "999999") => ({
+        top:    { style: "thin", color: { rgb: cor } },
+        bottom: { style: "thin", color: { rgb: cor } },
+        left:   { style: "thin", color: { rgb: cor } },
+        right:  { style: "thin", color: { rgb: cor } },
       });
 
-      ws["!cols"]   = [{ wch: 22 }, { wch: 3 }, ...Array(diasNum).fill({ wch: 3.5 })];
-      ws["!merges"] = merges;
-      ws["!ref"]    = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: totalCols } });
-      XLSX.utils.book_append_sheet(wb, ws, loja.replace(/[:\\\/\?\*\[\]]/g, "").substring(0, 31));
-    });
+      const C = (v, s) => ({ v: v ?? "", t: "s", s });
 
-    XLSX.writeFile(wb, `escala_${tituloMes.toLowerCase().replace(/ /g, "_")}.xlsx`);
+      const EST = {
+        titulo:   { font: { name: "Arial", sz: 12, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
+        setorH:   { font: { name: "Arial", sz: 9,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "111111" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
+        diaH:     { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "CCCCCC" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
+        diaHFim:  { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "666666" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda("666666") },
+        diaHCrit: { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FEF3C7" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
+        nome:     { font: { name: "Arial", sz: 8  }, fill: { patternType: "none" }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
+        vago:     { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "DDDDDD" } }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
+        turnoM:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "1e40af" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("1e40af") },
+        turnoT:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("92400e") },
+        folga:    { fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
+        trab:     { fill: { patternType: "none" }, border: borda() },
+        ferias:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("166534") },
+        intNum:   { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "none" }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
+      };
+
+      lojas.forEach((loja) => {
+        const ws = {}, merges = [];
+        let row = 0;
+        const totalCols = 2 + diasNum;
+        const set = (r, c, v) => { ws[XLSX.utils.encode_cell({ r, c })] = v; };
+        const criticos = [
+          ...config.getDiasCriticos(loja),
+          ...config.getDiasPagamento(loja),
+          ...config.getFeriados(loja),
+        ];
+
+        // Título
+        set(row, 0, C(`${tituloMes} - ${loja}`, EST.titulo));
+        merges.push({ s: { r: row, c: 0 }, e: { r: row, c: totalCols } });
+        row++;
+
+        setoresDaLoja(loja).forEach((setor) => {
+          // Cabeçalho setor
+          set(row, 0, C(setor, EST.setorH));
+          set(row, 1, C("T", EST.setorH));
+          for (let d = 1; d <= diasNum; d++) {
+            const dow  = config.getDow(d);
+            const fim  = dow === 0 || dow === 6;
+            const crit = criticos.includes(d);
+            set(row, d + 1, C(`${DIAS7[dow]}\n${d}`, crit ? EST.diaHCrit : fim ? EST.diaHFim : EST.diaH));
+          }
+          row++;
+
+          funcsDaLoja(loja, setor, "").forEach((func) => {
+            const eTurnoM = func.turno === "MANHÃ";
+            set(row, 0, C(func.cargoVago ? "CARGO VAGO" : func.nome, func.cargoVago ? EST.vago : EST.nome));
+            set(row, 1, C(eTurnoM ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0), eTurnoM ? EST.turnoM : EST.turnoT));
+
+            const fspan = getFeriasSpan(func);
+            if (fspan && func.ferias) {
+              for (let d = 1; d < fspan.inicio; d++) {
+                const v = escala[func.id]?.[d] || "T";
+                set(row, d + 1, C("", v === "F" ? EST.folga : EST.trab));
+              }
+              set(row, fspan.inicio + 1, C(getFeriasLabel(func), EST.ferias));
+              if (fspan.span > 1)
+                merges.push({ s: { r: row, c: fspan.inicio + 1 }, e: { r: row, c: fspan.fim + 1 } });
+              for (let d = fspan.fim + 1; d <= diasNum; d++) {
+                const v = escala[func.id]?.[d] || "T";
+                set(row, d + 1, C("", v === "F" ? EST.folga : EST.trab));
+              }
+            } else {
+              for (let d = 1; d <= diasNum; d++) {
+                const v    = escala[func.id]?.[d] || "T";
+                const dow  = config.getDow(d);
+                const intv = intervalos[`${func.id}_${d}`];
+                if (v === "F") {
+                  set(row, d + 1, C("", EST.folga));
+                } else if (dow === 0 && intv) {
+                  set(row, d + 1, C(intv, EST.intNum));
+                } else {
+                  set(row, d + 1, C("", EST.trab));
+                }
+              }
+            }
+            row++;
+          });
+        });
+
+        ws["!cols"]   = [{ wch: 24 }, { wch: 3 }, ...Array(diasNum).fill({ wch: 3.5 })];
+        ws["!merges"] = merges;
+        ws["!ref"]    = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: totalCols } });
+        const nomePlanilha = loja.replace(/[:\\\/\?\*\[\]]/g, "").substring(0, 31);
+        XLSX.utils.book_append_sheet(wb, ws, nomePlanilha);
+      });
+
+      XLSX.writeFile(wb, `escala_${tituloMes.toLowerCase().replace(/ /g, "_")}.xlsx`);
+    } catch (err) {
+      alert("Erro ao exportar: " + err.message);
+      console.error(err);
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════
-  // RENDER
+  // RENDER — GUARDS
+  // ═══════════════════════════════════════════════════════════════
+  if (authCarregando) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Arial, sans-serif", color: "#888" }}>
+        Carregando...
+      </div>
+    );
+  }
+
+  if (!sessao) return <TelaLogin onLogin={setSessao} />;
+
+  // ═══════════════════════════════════════════════════════════════
+  // RENDER PRINCIPAL
   // ═══════════════════════════════════════════════════════════════
   return (
     <div style={S.page}>
@@ -591,21 +784,34 @@ export default function EscalaFolga() {
         <div style={S.header}>
           <div>
             <div style={S.hTitle}>⬛ Escala de Folgas</div>
-            <div style={S.hSub}>Sistema inteligente · {tituloMes}</div>
+            <div style={S.hSub}>
+              {tituloMes} ·{" "}
+              <span style={{ color: "#888" }}>{sessao.user.email}</span>
+              {salvando  && <span style={{ color: "#b45309", marginLeft: 8 }}>💾 Salvando...</span>}
+              {salvouOk  && <span style={{ color: "#166534", marginLeft: 8 }}>✅ Salvo</span>}
+              {carregandoDB && <span style={{ color: "#1d4ed8", marginLeft: 8 }}>⏳ Carregando dados...</span>}
+            </div>
           </div>
           <div style={S.hControls}>
             <label style={S.lbl}>CSV:</label>
             <input type="file" accept=".csv" onChange={importarCSV} style={S.fileIn} />
             <label style={S.lbl}>Início:</label>
-            <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} style={S.inp} />
+            <input type="date" value={dataInicio}
+              onChange={(e) => setDataInicio(e.target.value)}
+              style={S.inp} />
             <label style={S.lbl}>Dias:</label>
             <input type="number" min={1} max={31} value={diasNum}
               onChange={(e) => {
                 const v = +e.target.value; setDiasNum(v);
-                if (funcionarios.length) gerarEscala(funcionarios, new ConfiguracaoMes({ dataInicio, dias: v, unidades: garantirCfg(cfgUnidades, funcionarios.map((f) => f.unidade)) }));
+                if (funcionarios.length) {
+                  const nova = calcularEscala(funcionarios, new ConfiguracaoMes({ dataInicio, dias: v, unidades: garantirCfg(cfgUnidades, funcionarios.map((f) => f.unidade)) }));
+                  setEscala(nova);
+                  salvarSupabase(nova, intervalos, cfgUnidades, funcionarios);
+                }
               }} style={{ ...S.inp, width: 58 }} />
             <button onClick={() => gerarEscala(funcionarios, config)} style={S.btn}>🔄 Regerar</button>
             <button onClick={exportarXLSX} style={{ ...S.btn, ...S.btnR }}>📥 Exportar XLSX</button>
+            <button onClick={() => sb.auth.signOut()} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000" }}>Sair</button>
           </div>
         </div>
 
@@ -623,7 +829,9 @@ export default function EscalaFolga() {
         {/* ════ ABA CONFIG ════ */}
         {aba === "config" && (
           <div style={{ paddingTop: 12 }}>
-            <p style={S.hint}>Configure antes de gerar. Dias separados por vírgula (ex: 5, 20).</p>
+            <p style={S.hint}>
+              Configurações são salvas automaticamente. Dias separados por vírgula (ex: 5, 20).
+            </p>
             {(funcionarios.length ? lojas : ["LOJA 1","LOJA 2","LOJA 3"]).map((unidade) => {
               const cfg = cfgUnidades[unidade] || cfgVazia();
               return (
@@ -631,9 +839,9 @@ export default function EscalaFolga() {
                   <div style={S.cardTit}>{unidade}</div>
                   <div style={S.grid3}>
                     {[
-                      ["🔴 Oferta / Promoção", "diasCriticos"],
-                      ["💰 Pagamento Salarial", "diasPagamento"],
-                      ["🗓 Feriados",           "feriados"],
+                      ["🔴 Oferta / Promoção",  "diasCriticos"],
+                      ["💰 Pagamento Salarial",  "diasPagamento"],
+                      ["🗓 Feriados",            "feriados"],
                     ].map(([label, campo]) => (
                       <div key={campo}>
                         <label style={S.lbl}>{label}</label>
@@ -651,7 +859,10 @@ export default function EscalaFolga() {
                           <span style={{ fontSize: 11, color: "#444", minWidth: 130, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{setor}</span>
                           <input type="number" min={0} max={20} style={{ ...S.inp, width: 52 }}
                             defaultValue={cfg.minimosPorSetor?.[setor] ?? 1}
-                            onBlur={(e) => setCfgCampo(unidade, "minimosPorSetor", { ...(cfgUnidades[unidade]?.minimosPorSetor || {}), [setor]: parseInt(e.target.value) || 0 })} />
+                            onBlur={(e) => setCfgCampo(unidade, "minimosPorSetor", {
+                              ...(cfgUnidades[unidade]?.minimosPorSetor || {}),
+                              [setor]: parseInt(e.target.value) || 0,
+                            })} />
                         </div>
                       ))}
                     </div>
@@ -663,7 +874,7 @@ export default function EscalaFolga() {
             {funcionarios.length > 0 && (
               <div style={S.card}>
                 <div style={S.cardTit}>🌴 Férias por Funcionário</div>
-                <p style={S.hint}>Defina o período exato de férias. Pode ser parcial ou iniciar no mês anterior.</p>
+                <p style={S.hint}>Férias são salvas automaticamente.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
                   {funcionarios.filter((f) => !f.cargoVago).map((f) => (
                     <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: f.ferias ? "#f0fdf4" : "#fafafa", borderRadius: 6, border: "1px solid #e5e7eb" }}>
@@ -728,7 +939,7 @@ export default function EscalaFolga() {
                 — Dia <strong>{trocaAlvo.dia}</strong>
               </p>
               {trocaSugestoes.length === 0
-                ? <div style={S.empty}>Nenhum colega disponível para troca neste dia.</div>
+                ? <div style={S.empty}>Nenhum colega disponível para troca.</div>
                 : trocaSugestoes.map((s, i) => (
                   <div key={i} style={{ ...S.alertCard, borderLeftColor: s.impacto === "alto" ? "#CC0000" : "#15803d", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
@@ -755,7 +966,6 @@ export default function EscalaFolga() {
         {/* ════ ABA ESCALA ════ */}
         {aba === "escala" && (
           <>
-            {/* Filtros */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
               <select style={S.inp} value={filtroLoja} onChange={(e) => setFiltroLoja(e.target.value)}>
                 <option value="">Todas as lojas</option>
@@ -773,14 +983,13 @@ export default function EscalaFolga() {
               <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
                 {[["#000","Folga"],["#fff","Trabalho"],["#166534","Férias"]].map(([bg, lb]) => (
                   <div key={lb} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#555" }}>
-                    <div style={{ width: 12, height: 12, borderRadius: 2, background: bg, border: "1px solid #aaa" }} />{lb}
+                    <div style={{ width: 12, height: 12, borderRadius: 2, background: bg, border: "1px solid #999" }} />{lb}
                   </div>
                 ))}
                 <span style={{ fontSize: 10, color: "#aaa" }}>Clique: alterna · Clique dir. em folga: trocar</span>
               </div>
             </div>
 
-            {/* Banner de erros */}
             {alertas.filter((a) => a.nivel === "erro").length > 0 && (
               <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
                 ❌ <strong>{alertas.filter((a) => a.nivel === "erro").length}</strong> erro(s) de cobertura.
@@ -792,7 +1001,7 @@ export default function EscalaFolga() {
               <div style={S.empty}>
                 <div style={{ fontSize: 36, marginBottom: 8 }}>📋</div>
                 Importe um CSV para visualizar a escala
-                <div style={{ fontSize: 11, marginTop: 6, color: "#bbb" }}>Formato: Nº, LOJA, SETOR, FUNÇÃO, TURNO, NOME, FOLGAS</div>
+                <div style={{ fontSize: 11, marginTop: 6, color: "#bbb" }}>Colunas: Nº, LOJA, SETOR, FUNÇÃO, TURNO, NOME, FOLGAS</div>
               </div>
             ) : (
               lojasFiltradas.map((loja) => {
@@ -804,10 +1013,6 @@ export default function EscalaFolga() {
                     {setores.map((setor) => {
                       const lista = funcsDaLoja(loja, setor, filtroTurno);
                       if (!lista.length) return null;
-
-                      // Sub-cabeçalho de turno se não há filtro
-                      const turnos = [...new Set(lista.map((f) => f.turno))].sort();
-
                       return (
                         <div key={setor}>
                           <div style={{ overflowX: "auto" }}>
@@ -815,14 +1020,13 @@ export default function EscalaFolga() {
                               <thead>
                                 <tr>
                                   <th style={{ ...S.thSetor, width: 160 }}>{setor}</th>
-                                  {/* coluna turno */}
                                   <th style={{ ...S.thSetor, width: 22, fontSize: 8 }}>T</th>
                                   {diasLista.map((d) => {
                                     const dow  = config.getDow(d);
                                     const fim  = dow === 0 || dow === 6;
                                     const crit = config.isDiaCritico(loja, d);
                                     return (
-                                      <th key={d} style={{ ...S.thDia, background: crit ? "#FEF3C7" : fim ? "#888" : "#ccc", color: fim && !crit ? "#fff" : "#000", width: 24 }}>
+                                      <th key={d} style={{ ...S.thDia, background: crit ? "#FEF3C7" : fim ? "#666" : "#bbb", color: fim && !crit ? "#fff" : "#000", width: 24 }}>
                                         <div style={{ fontSize: 8 }}>{DIAS7[dow]}</div>
                                         <div style={{ fontSize: 9, fontWeight: 700 }}>{d}</div>
                                       </th>
@@ -836,7 +1040,7 @@ export default function EscalaFolga() {
                                     return (
                                       <tr key={func.id} style={{ background: "#ddd" }}>
                                         <td style={{ ...S.tdNome, color: "#888", fontSize: 10 }}>CARGO VAGO</td>
-                                        <td style={{ ...S.tdDia, background: "#ddd", fontSize: 8, textAlign: "center", color: "#aaa" }}>–</td>
+                                        <td style={{ ...S.tdDia, background: "#ddd" }} />
                                         {diasLista.map((d) => <td key={d} style={{ ...S.tdDia, background: "#ddd" }} />)}
                                       </tr>
                                     );
@@ -856,13 +1060,12 @@ export default function EscalaFolga() {
                                             style={{ cursor: "pointer", marginLeft: 4, fontSize: 9, color: "#166534" }}>🌴</span>
                                         )}
                                       </td>
-                                      {/* Coluna turno */}
                                       <td style={{ ...S.tdDia, background: turnoColor, color: "#fff", fontSize: 8, fontWeight: 700, textAlign: "center" }}>
-                                        {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : func.turno.charAt(0)}
+                                        {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
                                       </td>
 
-                                      {fspan && fLabel
-                                        ? diasLista.map((d) => {
+                                      {(fspan && fLabel ? diasLista : diasLista).map((d) => {
+                                        if (fspan && fLabel) {
                                           if (d === fspan.inicio) {
                                             return (
                                               <td key={d} colSpan={fspan.span}
@@ -871,43 +1074,25 @@ export default function EscalaFolga() {
                                             );
                                           }
                                           if (d > fspan.inicio && d <= fspan.fim) return null;
-                                          const v   = escala[func.id]?.[d] || "T";
-                                          const dow = config.getDow(d);
-                                          const intv = intervalos[`${func.id}_${d}`];
-                                          return (
-                                            <td key={d}
-                                              style={{ ...S.tdDia, background: v === "F" ? "#000" : "#fff", cursor: "pointer" }}
-                                              onClick={() => v !== "V" && alternar(func.id, d)}
-                                              onContextMenu={(e) => { e.preventDefault(); if (v === "F") abrirTroca(func, d); }}>
-                                              {dow === 0 && v === "T" && (
-                                                <span onClick={(ev) => { ev.stopPropagation(); alternarIntervalo(func.id, d); }}
-                                                  style={{ fontSize: 9, fontWeight: 700, color: "#000", cursor: "pointer", display: "block", textAlign: "center" }}>
-                                                  {intv || ""}
-                                                </span>
-                                              )}
-                                            </td>
-                                          );
-                                        })
-                                        : diasLista.map((d) => {
-                                          const v    = escala[func.id]?.[d] || "T";
-                                          const dow  = config.getDow(d);
-                                          const intv = intervalos[`${func.id}_${d}`];
-                                          return (
-                                            <td key={d}
-                                              style={{ ...S.tdDia, background: v === "F" ? "#000" : "#fff", cursor: "pointer"}}
-                                              onClick={() => alternar(func.id, d)}
-                                              onContextMenu={(e) => { e.preventDefault(); if (v === "F") abrirTroca(func, d); }}
-                                              title={v === "F" ? "Folga" : dow === 0 ? "Clique para intervalo" : "Trabalho"}>
-                                              {dow === 0 && v === "T" && (
-                                                <span onClick={(ev) => { ev.stopPropagation(); alternarIntervalo(func.id, d); }}
-                                                  style={{ fontSize: 9, fontWeight: 700, color: "#000", cursor: "pointer", display: "block", textAlign: "center" }}>
-                                                  {intv || ""}
-                                                </span>
-                                              )}
-                                            </td>
-                                          );
-                                        })
-                                      }
+                                        }
+                                        const v    = escala[func.id]?.[d] || "T";
+                                        const dow  = config.getDow(d);
+                                        const intv = intervalos[`${func.id}_${d}`];
+                                        return (
+                                          <td key={d}
+                                            style={{ ...S.tdDia, background: v === "F" ? "#000" : "#fff", cursor: "pointer" }}
+                                            onClick={() => v !== "V" && alternar(func.id, d)}
+                                            onContextMenu={(e) => { e.preventDefault(); if (v === "F") abrirTroca(func, d); }}
+                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
+                                            {dow === 0 && v === "T" && (
+                                              <span onClick={(ev) => { ev.stopPropagation(); alternarIntervalo(func.id, d); }}
+                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: "pointer", display: "block", textAlign: "center" }}>
+                                                {intv || ""}
+                                              </span>
+                                            )}
+                                          </td>
+                                        );
+                                      })}
                                     </tr>
                                   );
                                 })}
@@ -967,28 +1152,28 @@ function FeriasModal({ func, onSalvar, onFechar }) {
 const S = {
   page:      { minHeight: "100vh", background: "#f0f0f0", padding: "1rem", fontFamily: "Arial, sans-serif" },
   wrap:      { maxWidth: 1600, margin: "0 auto", background: "#fff", borderRadius: 10, boxShadow: "0 2px 12px rgba(0,0,0,.1)", padding: "1rem" },
-  header:    { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem", paddingBottom: "1rem", borderBottom: "1px solid #e5e7eb" },
+  header:    { display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1rem", paddingBottom: "1rem", borderBottom: "2px solid #111" },
   hTitle:    { fontSize: 17, fontWeight: 700, color: "#111" },
   hSub:      { fontSize: 11, color: "#888", marginTop: 2 },
   hControls: { display: "flex", flexWrap: "wrap", gap: 7, alignItems: "center" },
   lbl:       { fontSize: 11, color: "#555" },
-  fileIn:    { fontSize: 11, border: "1px solid #d1d5db", borderRadius: 5, padding: "4px 7px", background: "#f9fafb", cursor: "pointer" },
-  inp:       { fontSize: 11, padding: "4px 7px", borderRadius: 5, border: "1px solid #d1d5db", background: "#f9fafb", color: "#111" },
-  inpFull:   { fontSize: 11, padding: "4px 7px", borderRadius: 5, border: "1px solid #d1d5db", background: "#f9fafb", color: "#111", width: "100%", marginTop: 3 },
-  btn:       { fontSize: 11, padding: "5px 11px", borderRadius: 5, border: "1px solid #d1d5db", background: "#f9fafb", color: "#111", cursor: "pointer" },
+  fileIn:    { fontSize: 11, border: "1px solid #999", borderRadius: 5, padding: "4px 7px", background: "#f9fafb", cursor: "pointer" },
+  inp:       { fontSize: 11, padding: "4px 7px", borderRadius: 5, border: "1px solid #999", background: "#f9fafb", color: "#111" },
+  inpFull:   { fontSize: 11, padding: "4px 7px", borderRadius: 5, border: "1px solid #999", background: "#f9fafb", color: "#111", width: "100%", marginTop: 3 },
+  btn:       { fontSize: 11, padding: "5px 11px", borderRadius: 5, border: "1px solid #999", background: "#f9fafb", color: "#111", cursor: "pointer" },
   btnR:      { background: "#CC0000", color: "#fff", borderColor: "#CC0000" },
-  tabs:      { display: "flex", gap: 2, borderBottom: "2px solid #e5e7eb", marginBottom: "1rem" },
+  tabs:      { display: "flex", gap: 2, borderBottom: "2px solid #333", marginBottom: "1rem" },
   tab:       { fontSize: 12, padding: "7px 14px", border: "none", borderBottom: "2px solid transparent", background: "transparent", color: "#666", cursor: "pointer", marginBottom: -2 },
   tabOn:     { color: "#111", borderBottomColor: "#111", fontWeight: 700 },
   hint:      { fontSize: 11, color: "#888", marginBottom: 8, lineHeight: 1.5 },
-  empty:     { textAlign: "center", padding: "2.5rem 1rem", color: "#aaa", border: "2px dashed #e5e7eb", borderRadius: 8 },
-  card:      { border: "1px solid #e5e7eb", borderRadius: 7, padding: ".9rem", marginBottom: "1rem" },
+  empty:     { textAlign: "center", padding: "2.5rem 1rem", color: "#aaa", border: "2px dashed #ccc", borderRadius: 8 },
+  card:      { border: "1px solid #ccc", borderRadius: 7, padding: ".9rem", marginBottom: "1rem" },
   cardTit:   { fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 10 },
   grid3:     { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 },
   alertCard: { borderLeft: "4px solid #CC0000", background: "#fafafa", borderRadius: 5, padding: "9px 12px", marginBottom: 7 },
   lojaH:     { background: "#000", color: "#fff", fontWeight: 700, fontSize: 13, padding: "7px 12px", textAlign: "center", letterSpacing: ".06em" },
-  thSetor:   { background: "#000", color: "#fff", fontWeight: 700, fontSize: 10, padding: "5px 6px", textAlign: "center", border: "1px solid #555", position: "sticky", left: 0, zIndex: 1 },
-  thDia:     { padding: "2px 1px", border: "1px solid #aaa", textAlign: "center", fontWeight: 600 },
-  tdNome:    { padding: "2px 6px", border: "1px solid #ddd", fontWeight: 400, fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, background: "#fff", position: "sticky", left: 0, zIndex: 0 },
-  tdDia:     { padding: 0, border: "1px solid #ddd", height: 20, textAlign: "center" },
+  thSetor:   { background: "#000", color: "#fff", fontWeight: 700, fontSize: 10, padding: "5px 6px", textAlign: "center", border: "1px solid #333", position: "sticky", left: 0, zIndex: 1 },
+  thDia:     { padding: "2px 1px", border: "1px solid #999", textAlign: "center", fontWeight: 600 },
+  tdNome:    { padding: "2px 6px", border: "1px solid #999", fontWeight: 400, fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, background: "#fff", position: "sticky", left: 0, zIndex: 0 },
+  tdDia:     { padding: 0, border: "1px solid #999", height: 20, textAlign: "center" },
 };
