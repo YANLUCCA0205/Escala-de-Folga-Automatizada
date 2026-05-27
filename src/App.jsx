@@ -1,5 +1,6 @@
+
 // ═══════════════════════════════════════════════════════════════════
-//  ESCALA DE FOLGAS — v5.0
+//  ESCALA DE FOLGAS — v6.0
 //  npm install xlsx @supabase/supabase-js
 // ═══════════════════════════════════════════════════════════════════
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -12,6 +13,42 @@ import { createClient } from "@supabase/supabase-js";
 const SUPA_URL = "https://jvvjhcfqvitnxdutfije.supabase.co";
 const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2dmpoY2Zxdml0bnhkdXRmaWplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4Mjk5ODksImV4cCI6MjA5NTQwNTk4OX0.aJJX3kP1jgVaK1mtiwZ5bZzNxSSxtm4cDb1ducx3Jvk";
 const sb = createClient(SUPA_URL, SUPA_KEY);
+
+// ───────────────────────────────────────────────────────────────────
+// HIERARQUIA DE CARGOS (do mais alto para o mais baixo)
+// Usado para ordenar funcionários dentro de cada setor
+// ───────────────────────────────────────────────────────────────────
+const HIERARQUIA_CARGOS = [
+  "GERENTE", "GERENTE DE PERECÍVEIS", "GERENTE DE MARKETING", "GERENTE DE TI",
+  "SUB GERENTE",
+  "SUPERVISOR OPERACIONAL", "SUPERVISOR ADM",
+  "ENCAR. DE FRENTE CAIXA", "ENCAR. AÇOUGUE", "ENCAR. DE PADARIA", "ENCAR. PADARIA",
+  "ENCAR. FLV", "ENCAR. REPOSIÇÃO", "ENCAR. DE ESTOQUE", "ENCAR. DE TRANSPORTES",
+  "ENCARREGADO PREV. PERDAS",
+  "SUB ENCAR. REPOSIÇÃO", "SUB ENCAR. ESTOQUE", "SUB ENCAR PADARIA", "SUB. ENCAR. PADARIA",
+  "FISCAL DE CAIXA", "FISCAL DE PREVENÇÃO PERDAS",
+  "ANALISTA DE RH", "COMPRADOR",
+  "ASSISTENTE ADMINISTRATIVO", "ASSISTENTE FINANCEIRO", "ASSISTENTE TESOURARIA",
+  "ASSISTENTE COMERCIAL", "ASSISTENTE DE MARKETING", "ASSISTENTE DE RH",
+  "AUXILIAR CONTÁBIL", "AUXILIAR TESOURARIA", "LANÇADOR DE NOTA",
+  "OPERADOR DE CAIXA", "OPERADOR DE CAIXA/ RECEPÇÃO", "OPERADOR DE CAIXA/ DELIVERY",
+  "ATENDENTE DE LANCHONETE", "OPERADOR DE LOJA",
+  "AÇOUGUEIRO", "BALCONISTA", "CONFEITEIRA",
+  "REPOSITOR", "REPOSITOR ASSITENTE",
+  "AUXILIAR DE AÇOUGUE", "AUXILIAR DE PADARIA", "AUXILIAR DE ESTOQUE",
+  "AUXILIAR DE ESTOQUE FLV", "AUXILIAR DE PREV DE PERDAS",
+  "AUXILIAR DE PREV. DE PERDAS", "AUXILIAR DE PREVENÇÃO DE PERDAS",
+  "AUXILIAR DE RH", "AUXILIAR DE DP", "AUXILIAR DE TI",
+  "CONFERENTE", "MOTORISTA", "MOTORISTA ESTOQUISTA",
+  "AJUDANTE DE MOTORISTA", "AUXILIAR LIMPEZA",
+];
+
+// Retorna a posição hierárquica de um cargo (menor = mais alto)
+const hierarquiaPos = (funcao = "") => {
+  const base = funcao.trim().toUpperCase().replace(/\s+\d+$/, "").replace(/\s*\([^)]*\)$/, "").trim();
+  const idx = HIERARQUIA_CARGOS.findIndex((h) => base.startsWith(h) || h.startsWith(base));
+  return idx === -1 ? 999 : idx;
+};
 
 // ───────────────────────────────────────────────────────────────────
 // UTILITÁRIOS
@@ -43,11 +80,16 @@ const parseRegimeFolga = (str = "") => {
 const DIAS_DOW = { DOM: 0, SEG: 1, TER: 2, QUA: 3, QUI: 4, SEX: 5, SAB: 6 };
 const DIAS7    = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 const MESES_PT = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+
+// Todos os setores reais do CSV
 const SETORES_ORDEM = [
-  "CAIXA","CAIXA/PACOTE","CAIXA/LANCHONETE","REPOSIÇÃO","AÇOUGUE","PADARIA",
-  "HORTIFRUTI","LIMPEZA","DEPÓSITO","FRIOS","ESTOQUE","ENTREGA",
-  "ADMINISTRATIVO OPERACIONAL","ADMINISTRATIVO","ADM","COMERCIAL","MARKETING",
-  "FINANCEIRO","RH/ DP","RH / DP","CONTÁBIL FISCAL","TI","PREVENÇÃO DE PERDAS","PREVENÇÃO P.",
+  "CAIXA","CAIXA/PACOTE","CAIXA/LANCHONETE",
+  "REPOSIÇÃO","AÇOUGUE","PADARIA","HORTIFRUTI",
+  "LIMPEZA","ESTOQUE","ENTREGA",
+  "PREVENÇÃO DE PERDAS",
+  "ADMINISTRATIVO OPERACIONAL","ADMINISTRATIVO",
+  "FINANCEIRO","RH/ DP","CONTÁBIL FISCAL",
+  "COMERCIAL","MARKETING","TI",
 ];
 
 // ───────────────────────────────────────────────────────────────────
@@ -149,8 +191,10 @@ function gerarEscalaFuncionario(func, idx, grupo, cfg) {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// ALERTA ENGINE
+// ALERTA ENGINE — cobertura mínima + sobrecarga
 // ───────────────────────────────────────────────────────────────────
+const MAX_DIAS_SEGUIDOS = 7; // mais que isso = sobrecarga
+
 class AlertaEngine {
   static verificar(funcionarios, escala, config) {
     const alertas = [], grupos = {};
@@ -158,6 +202,8 @@ class AlertaEngine {
       const k = `${f.unidade}||${f.setor}`;
       (grupos[k] = grupos[k] || []).push(f);
     });
+
+    // ── Cobertura mínima + dias críticos ──
     Object.entries(grupos).forEach(([k, lista]) => {
       const [unidade, setor] = k.split("||");
       const minimo = config.getMinimoPorSetor(unidade, setor);
@@ -184,12 +230,38 @@ class AlertaEngine {
         }
       }
     });
+
+    // ── Sobrecarga: mais de MAX_DIAS_SEGUIDOS dias seguidos sem folga ──
+    funcionarios.forEach((func) => {
+      if (func.cargoVago || func.ferias) return;
+      const esc = escala[func.id] || {};
+      let seguidos = 0;
+      let inicioBloco = 1;
+      for (let d = 1; d <= config.dias + 1; d++) {
+        const status = d <= config.dias ? (esc[d] || "T") : "F";
+        if (status === "T") {
+          if (seguidos === 0) inicioBloco = d;
+          seguidos++;
+        } else {
+          if (seguidos > MAX_DIAS_SEGUIDOS) {
+            alertas.push({
+              tipo: "sobrecarga", nivel: "aviso",
+              dia: inicioBloco, unidade: func.unidade, setor: func.setor,
+              msg: `Sobrecarga: ${func.nome} trabalha ${seguidos} dias seguidos (dia ${inicioBloco} ao ${d - 1}) em ${func.setor}/${func.unidade}`,
+              funcIds: [func.id],
+            });
+          }
+          seguidos = 0;
+        }
+      }
+    });
+
     return alertas;
   }
 }
 
 // ───────────────────────────────────────────────────────────────────
-// TROCA ENGINE
+// TROCA ENGINE — FIX: troca a folga do alvo COM a folga do candidato
 // ───────────────────────────────────────────────────────────────────
 class TrocaEngine {
   static sugerir({ funcAlvo, diaAlvo, funcionarios, escala, config }) {
@@ -199,20 +271,37 @@ class TrocaEngine {
         !f.ferias && !f.cargoVago && (escala[f.id]?.[diaAlvo] || "T") === "T"
       )
       .map((c) => {
-        const par = Object.entries(escala[c.id] || {}).find(([d, v]) => v === "F" && Number(d) !== diaAlvo);
+        // Encontra um dia de folga do candidato para trocar
+        const par = Object.entries(escala[c.id] || {}).find(
+          ([d, v]) => v === "F" && Number(d) !== diaAlvo
+        );
         return {
           funcionario: c,
           diaFolgaAtual: par ? Number(par[0]) : null,
           impacto: config.isDiaCritico(funcAlvo.unidade, diaAlvo) ? "alto" : "baixo",
         };
-      });
+      })
+      .filter((s) => s.diaFolgaAtual !== null); // só sugere se tiver folga para trocar
   }
-  static executar({ funcAlvo, diaAlvo, funcCandidato, escalaAtual }) {
-    return {
-      ...escalaAtual,
-      [funcAlvo.id]:      { ...escalaAtual[funcAlvo.id],      [diaAlvo]: "T" },
-      [funcCandidato.id]: { ...escalaAtual[funcCandidato.id], [diaAlvo]: "F" },
-    };
+
+  // FIX: troca REAL — alvo perde a folga no diaAlvo, candidato ganha a folga no diaAlvo
+  // e alvo ganha a folga que o candidato tinha antes
+  static executar({ funcAlvo, diaAlvo, funcCandidato, diaFolgaCandidato, escalaAtual }) {
+    const nova = { ...escalaAtual };
+
+    // Copia escala do alvo e do candidato
+    nova[funcAlvo.id]      = { ...escalaAtual[funcAlvo.id] };
+    nova[funcCandidato.id] = { ...escalaAtual[funcCandidato.id] };
+
+    // Alvo: perde a folga no diaAlvo, ganha a folga do candidato
+    nova[funcAlvo.id][diaAlvo] = "T";
+    if (diaFolgaCandidato) nova[funcAlvo.id][diaFolgaCandidato] = "F";
+
+    // Candidato: ganha a folga no diaAlvo, perde a sua folga antiga
+    nova[funcCandidato.id][diaAlvo] = "F";
+    if (diaFolgaCandidato) nova[funcCandidato.id][diaFolgaCandidato] = "T";
+
+    return nova;
   }
 }
 
@@ -220,11 +309,11 @@ class TrocaEngine {
 // TELA DE LOGIN
 // ───────────────────────────────────────────────────────────────────
 function TelaLogin({ onLogin }) {
-  const [email,    setEmail]    = useState("");
-  const [senha,    setSenha]    = useState("");
-  const [erro,     setErro]     = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const [modo,     setModo]     = useState("login"); // "login" | "cadastro"
+  const [email,   setEmail]   = useState("");
+  const [senha,   setSenha]   = useState("");
+  const [erro,    setErro]    = useState("");
+  const [loading, setLoading] = useState(false);
+  const [modo,    setModo]    = useState("login");
 
   const submeter = async () => {
     setErro(""); setLoading(true);
@@ -235,15 +324,13 @@ function TelaLogin({ onLogin }) {
       } else {
         res = await sb.auth.signUp({ email, password: senha });
         if (!res.error) {
-          setErro("Conta criada! Verifique seu e-mail para confirmar e depois faça login.");
+          setErro("Conta criada! Verifique seu e-mail e depois faça login.");
           setModo("login"); setLoading(false); return;
         }
       }
-      if (res.error) { setErro(res.error.message); }
-      else { onLogin(res.data.session); }
-    } catch (e) {
-      setErro(String(e));
-    }
+      if (res.error) setErro(res.error.message);
+      else onLogin(res.data.session);
+    } catch (e) { setErro(String(e)); }
     setLoading(false);
   };
 
@@ -255,8 +342,7 @@ function TelaLogin({ onLogin }) {
           <div style={{ fontSize: 20, fontWeight: 700, color: "#111" }}>Escala de Folgas</div>
           <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>Sistema de Gestão · União Supermercados</div>
         </div>
-
-        <div style={{ display: "flex", gap: 0, marginBottom: 20, border: "1px solid #e5e7eb", borderRadius: 7, overflow: "hidden" }}>
+        <div style={{ display: "flex", gap: 0, marginBottom: 20, border: "1px solid #ccc", borderRadius: 7, overflow: "hidden" }}>
           {[["login","Entrar"],["cadastro","Criar conta"]].map(([m, label]) => (
             <button key={m} onClick={() => { setModo(m); setErro(""); }}
               style={{ flex: 1, padding: "8px 0", fontSize: 12, border: "none", cursor: "pointer",
@@ -265,29 +351,24 @@ function TelaLogin({ onLogin }) {
             </button>
           ))}
         </div>
-
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <div>
             <label style={{ fontSize: 11, color: "#555", display: "block", marginBottom: 4 }}>E-mail</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submeter()}
-              placeholder="seu@email.com"
-              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d1d5db", boxSizing: "border-box" }} />
+              onKeyDown={(e) => e.key === "Enter" && submeter()} placeholder="seu@email.com"
+              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #999", boxSizing: "border-box" }} />
           </div>
           <div>
             <label style={{ fontSize: 11, color: "#555", display: "block", marginBottom: 4 }}>Senha</label>
             <input type="password" value={senha} onChange={(e) => setSenha(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && submeter()}
-              placeholder="••••••••"
-              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #d1d5db", boxSizing: "border-box" }} />
+              onKeyDown={(e) => e.key === "Enter" && submeter()} placeholder="••••••••"
+              style={{ width: "100%", fontSize: 13, padding: "8px 10px", borderRadius: 6, border: "1px solid #999", boxSizing: "border-box" }} />
           </div>
           {erro && (
             <div style={{ fontSize: 11, color: erro.includes("criada") ? "#166534" : "#CC0000",
               background: erro.includes("criada") ? "#f0fdf4" : "#fef2f2",
               border: `1px solid ${erro.includes("criada") ? "#bbf7d0" : "#fecaca"}`,
-              borderRadius: 5, padding: "8px 10px" }}>
-              {erro}
-            </div>
+              borderRadius: 5, padding: "8px 10px" }}>{erro}</div>
           )}
           <button onClick={submeter} disabled={loading || !email || !senha}
             style={{ padding: "10px 0", borderRadius: 6, border: "none", background: "#111", color: "#fff",
@@ -306,7 +387,6 @@ function TelaLogin({ onLogin }) {
 export default function EscalaFolga() {
   const [sessao,         setSessao]         = useState(null);
   const [authCarregando, setAuthCarregando] = useState(true);
-
   const [funcionarios,   setFuncionarios]   = useState([]);
   const [escala,         setEscala]         = useState({});
   const [intervalos,     setIntervalos]     = useState({});
@@ -324,11 +404,20 @@ export default function EscalaFolga() {
   const [salvouOk,       setSalvouOk]       = useState(false);
   const [carregandoDB,   setCarregandoDB]   = useState(false);
   const salvarTimer = useRef(null);
+  const funcsRef    = useRef([]);
+  const escalaRef   = useRef({});
+  const intervRef   = useRef({});
+  const cfgRef      = useRef({});
 
-  // ── chave do mês ────────────────────────────────────────────────
-  const mesKey = useMemo(() => dataInicio.slice(0, 7), [dataInicio]); // "2026-05"
+  // mantém refs sincronizados para uso no debounce
+  useEffect(() => { funcsRef.current  = funcionarios; }, [funcionarios]);
+  useEffect(() => { escalaRef.current = escala;       }, [escala]);
+  useEffect(() => { intervRef.current = intervalos;   }, [intervalos]);
+  useEffect(() => { cfgRef.current    = cfgUnidades;  }, [cfgUnidades]);
 
-  // ── auth ────────────────────────────────────────────────────────
+  const mesKey = useMemo(() => dataInicio.slice(0, 7), [dataInicio]);
+
+  // ── auth ──────────────────────────────────────────────────────
   useEffect(() => {
     sb.auth.getSession().then(({ data }) => {
       setSessao(data.session);
@@ -338,110 +427,85 @@ export default function EscalaFolga() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── carregar dados ao logar ou mudar mês ──────────────────────
   useEffect(() => {
     if (!sessao) return;
     carregarDados();
   }, [sessao, mesKey]);
 
+  // ── carregar do Supabase ──────────────────────────────────────
   const carregarDados = async () => {
     setCarregandoDB(true);
     try {
-      // Configs
-      const { data: cfgRows } = await sb
-        .from("configuracoes")
-        .select("unidade, dados")
-        .eq("mes", mesKey);
-
+      const { data: cfgRows } = await sb.from("configuracoes").select("unidade, dados").eq("mes", mesKey);
       if (cfgRows?.length) {
         const novas = {};
         cfgRows.forEach((r) => { novas[r.unidade] = r.dados; });
         setCfgUnidades(novas);
+        cfgRef.current = novas;
       }
-
-      // Escala salva (folgas manuais + férias)
-      const { data: escRows } = await sb
-        .from("escalas")
-        .select("unidade, escala, intervalos, ferias")
-        .eq("mes", mesKey);
-
+      const { data: escRows } = await sb.from("escalas").select("unidade, escala, intervalos, ferias").eq("mes", mesKey);
       if (escRows?.length) {
-        // Mescla escalas de todas as unidades
-        let escMerge = {}, intMerge = {};
-        const feriasPorFunc = {};
+        let escMerge = {}, intMerge = {}, feriasPorFunc = {};
         escRows.forEach((r) => {
           Object.assign(escMerge, r.escala || {});
           Object.assign(intMerge, r.intervalos || {});
           Object.assign(feriasPorFunc, r.ferias || {});
         });
         setEscala(escMerge);
+        escalaRef.current = escMerge;
         setIntervalos(intMerge);
-        // Aplica férias nos funcionários se já carregados
+        intervRef.current = intMerge;
         if (Object.keys(feriasPorFunc).length) {
-          setFuncionarios((prev) => prev.map((f) => ({
-            ...f,
-            ferias: feriasPorFunc[f.id] || f.ferias,
-          })));
+          setFuncionarios((prev) => prev.map((f) => ({ ...f, ferias: feriasPorFunc[f.id] ?? f.ferias })));
         }
       }
-    } catch (e) {
-      console.error("Erro ao carregar dados:", e);
-    }
+    } catch (e) { console.error("Erro ao carregar:", e); }
     setCarregandoDB(false);
   };
 
-  // ── salvar no Supabase (debounced 1.5s) ─────────────────────────
+  // ── salvar no Supabase (debounced) ───────────────────────────
   const salvarSupabase = useCallback((novaEscala, novosIntervalos, novasCfgs, novosFuncs) => {
     if (salvarTimer.current) clearTimeout(salvarTimer.current);
     salvarTimer.current = setTimeout(async () => {
       setSalvando(true);
+      const funcs  = novosFuncs      || funcsRef.current;
+      const esc    = novaEscala      || escalaRef.current;
+      const intv   = novosIntervalos || intervRef.current;
+      const cfgs   = novasCfgs       || cfgRef.current;
+      const lojas  = [...new Set(funcs.map((f) => f.unidade))];
       try {
-        const lojas = [...new Set((novosFuncs || funcionarios).map((f) => f.unidade))];
-
-        // Salvar configs por loja
         for (const loja of lojas) {
-          if (!(novasCfgs || cfgUnidades)[loja]) continue;
-          await sb.from("configuracoes").upsert({
-            unidade: loja, mes: mesKey,
-            dados: (novasCfgs || cfgUnidades)[loja],
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "unidade,mes" });
-        }
-
-        // Salvar escala por loja
-        for (const loja of lojas) {
-          const funcsLoja = (novosFuncs || funcionarios).filter((f) => f.unidade === loja);
-          const escLoja   = {};
-          const ferLoja   = {};
+          if (cfgs[loja]) {
+            await sb.from("configuracoes").upsert(
+              { unidade: loja, mes: mesKey, dados: cfgs[loja], updated_at: new Date().toISOString() },
+              { onConflict: "unidade,mes" }
+            );
+          }
+          const funcsLoja = funcs.filter((f) => f.unidade === loja);
+          const escLoja = {}, ferLoja = {};
           funcsLoja.forEach((f) => {
-            escLoja[f.id] = (novaEscala || escala)[f.id] || {};
+            escLoja[f.id] = esc[f.id] || {};
             if (f.ferias) ferLoja[f.id] = f.ferias;
           });
-          await sb.from("escalas").upsert({
-            unidade: loja, mes: mesKey,
-            escala: escLoja,
-            intervalos: novosIntervalos || intervalos,
-            ferias: ferLoja,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: "unidade,mes" });
+          await sb.from("escalas").upsert(
+            { unidade: loja, mes: mesKey, escala: escLoja, intervalos: intv, ferias: ferLoja, updated_at: new Date().toISOString() },
+            { onConflict: "unidade,mes" }
+          );
         }
-
         setSalvouOk(true);
         setTimeout(() => setSalvouOk(false), 2500);
-      } catch (e) {
-        console.error("Erro ao salvar:", e);
-      }
+      } catch (e) { console.error("Erro ao salvar:", e); }
       setSalvando(false);
     }, 1500);
-  }, [funcionarios, escala, intervalos, cfgUnidades, mesKey]);
+  }, [mesKey]);
 
-  // ── config ───────────────────────────────────────────────────────
+  // ── config ────────────────────────────────────────────────────
   const config = useMemo(() => {
     const unidades = garantirCfg(cfgUnidades, funcionarios.map((f) => f.unidade));
     return new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades });
   }, [dataInicio, diasNum, cfgUnidades, funcionarios]);
 
-  // ── importar CSV ────────────────────────────────────────────────
+  // ── importar CSV ──────────────────────────────────────────────
   const importarCSV = (e) => {
     const arquivo = e.target.files[0];
     if (!arquivo) return;
@@ -454,23 +518,18 @@ export default function EscalaFolga() {
         texto = dec.decode(buffer);
         if (texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1);
       } catch { texto = new TextDecoder("windows-1252").decode(buffer); }
-
       const sep    = texto.includes(";") ? ";" : ",";
       const linhas = texto.split("\n").filter((l) => l.trim());
       const dados  = linhas.slice(1).map((linha) => {
         const c = linha.split(sep).map((x) => x.trim().replace(/^"|"$/g, ""));
-        const num    = c[0] || "";
-        const loja   = c[1] ? `LOJA ${c[1].trim()}` : "LOJA 1";
-        const setor  = (c[2] || "GERAL").trim().toUpperCase();
-        const funcao = (c[3] || "").trim();
-        const turno  = (c[4] || "").trim().toUpperCase();
-        const nome   = (c[5] || "").trim();
-        const folgas = (c[6] || "").trim();
+        const num = c[0] || "", loja = c[1] ? `LOJA ${c[1].trim()}` : "LOJA 1";
+        const setor = (c[2] || "GERAL").trim().toUpperCase();
+        const funcao = (c[3] || "").trim(), turno = (c[4] || "").trim().toUpperCase();
+        const nome = (c[5] || "").trim(), folgas = (c[6] || "").trim();
         if (!nome) return null;
-        const regime = parseRegimeFolga(folgas);
         const f = new FuncionarioModel({
           id: num || String(Math.random()), nome, setor, funcao, turno,
-          unidade: loja, regimeFolga: regime,
+          unidade: loja, regimeFolga: parseRegimeFolga(folgas),
         });
         f.cargoVago = nome.toUpperCase().includes("CARGO VAGO");
         return f;
@@ -478,30 +537,29 @@ export default function EscalaFolga() {
 
       const novasCfgs = garantirCfg(cfgUnidades, dados.map((f) => f.unidade));
       setCfgUnidades(novasCfgs);
+      cfgRef.current = novasCfgs;
       setFuncionarios(dados);
+      funcsRef.current = dados;
       const novaEscala = calcularEscala(dados, new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs }));
       setEscala(novaEscala);
+      escalaRef.current = novaEscala;
       salvarSupabase(novaEscala, intervalos, novasCfgs, dados);
     };
     leitor.readAsArrayBuffer(arquivo);
   };
 
-  // ── calcular escala (puro, retorna objeto) ────────────────────
+  // ── calcular escala (puro) ────────────────────────────────────
   const calcularEscala = (lista, cfg) => {
     const nova = {};
     const grupos = {};
-    lista.forEach((f) => {
-      const k = `${f.unidade}||${f.setor}`;
-      (grupos[k] = grupos[k] || []).push(f);
-    });
+    lista.forEach((f) => { const k = `${f.unidade}||${f.setor}`; (grupos[k] = grupos[k] || []).push(f); });
     Object.values(grupos).forEach((grupo) => {
       grupo.forEach((func, idx) => {
         if (func.cargoVago) { nova[func.id] = {}; return; }
         if (func.ferias) {
           nova[func.id] = {};
           for (let d = 1; d <= cfg.dias; d++) {
-            const dt  = cfg.getDataDia(d);
-            const iso = dt.toISOString().slice(0, 10);
+            const iso = cfg.getDataDia(d).toISOString().slice(0, 10);
             nova[func.id][d] = (iso >= func.ferias.inicio && iso <= func.ferias.fim) ? "V" : "T";
           }
           return;
@@ -512,24 +570,25 @@ export default function EscalaFolga() {
     return nova;
   };
 
-  // ── gerar escala (setState) ──────────────────────────────────────
   const gerarEscala = useCallback((lista, cfg) => {
     const nova = calcularEscala(lista, cfg);
     setEscala(nova);
-    salvarSupabase(nova, intervalos, cfgUnidades, lista);
-  }, [intervalos, cfgUnidades, salvarSupabase]);
+    escalaRef.current = nova;
+    salvarSupabase(nova, intervRef.current, cfgRef.current, lista);
+  }, [salvarSupabase]);
 
-  // ── alternar célula ─────────────────────────────────────────────
+  // ── alternar célula ───────────────────────────────────────────
   const alternar = (id, dia) => {
     const seq = { T: "F", F: "T", V: "V" };
     setEscala((prev) => {
       const nova = { ...prev, [id]: { ...prev[id], [dia]: seq[prev[id]?.[dia] || "T"] } };
-      salvarSupabase(nova, intervalos, cfgUnidades, funcionarios);
+      escalaRef.current = nova;
+      salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
       return nova;
     });
   };
 
-  // ── intervalo domingo ────────────────────────────────────────────
+  // ── intervalo domingo ─────────────────────────────────────────
   const alternarIntervalo = (id, dia) => {
     const key = `${id}_${dia}`;
     setIntervalos((prev) => {
@@ -538,12 +597,13 @@ export default function EscalaFolga() {
       if (!cur) novo = { ...prev, [key]: "1" };
       else if (cur === "4") { novo = { ...prev }; delete novo[key]; }
       else novo = { ...prev, [key]: String(Number(cur) + 1) };
-      salvarSupabase(escala, novo, cfgUnidades, funcionarios);
+      intervRef.current = novo;
+      salvarSupabase(escalaRef.current, novo, cfgRef.current, funcsRef.current);
       return novo;
     });
   };
 
-  // ── férias ───────────────────────────────────────────────────────
+  // ── férias ────────────────────────────────────────────────────
   const salvarFerias = (funcId, inicio, fim) => {
     setFuncionarios((prev) => {
       const nova = prev.map((f) => {
@@ -552,45 +612,59 @@ export default function EscalaFolga() {
         upd.ferias = inicio && fim ? { inicio, fim } : null;
         return upd;
       });
+      funcsRef.current = nova;
       const novaEscala = calcularEscala(nova, config);
       setEscala(novaEscala);
-      salvarSupabase(novaEscala, intervalos, cfgUnidades, nova);
+      escalaRef.current = novaEscala;
+      salvarSupabase(novaEscala, intervRef.current, cfgRef.current, nova);
       return nova;
     });
     setFeriasModal(null);
   };
 
-  // ── salvar configs ───────────────────────────────────────────────
+  // ── salvar config ─────────────────────────────────────────────
   const setCfgCampo = (unidade, campo, valor) => {
     setCfgUnidades((prev) => {
       const novas = { ...prev, [unidade]: { ...(prev[unidade] || cfgVazia()), [campo]: valor } };
-      salvarSupabase(escala, intervalos, novas, funcionarios);
+      cfgRef.current = novas;
+      salvarSupabase(escalaRef.current, intervRef.current, novas, funcsRef.current);
       return novas;
     });
   };
 
-  // ── alertas ──────────────────────────────────────────────────────
+  // ── alertas ───────────────────────────────────────────────────
   const alertas = useMemo(() => {
     if (!funcionarios.length) return [];
-    return AlertaEngine.verificar(funcionarios.filter((f) => !f.ferias && !f.cargoVago), escala, config);
+    return AlertaEngine.verificar(funcionarios.filter((f) => !f.cargoVago), escala, config);
   }, [funcionarios, escala, config]);
 
-  // ── troca ────────────────────────────────────────────────────────
+  // ── troca ─────────────────────────────────────────────────────
   const abrirTroca = (func, dia) => {
     setTrocaSugestoes(TrocaEngine.sugerir({ funcAlvo: func, diaAlvo: dia, funcionarios, escala, config }));
     setTrocaAlvo({ func, dia });
     setAba("troca");
   };
   const executarTroca = (candidato) => {
-    const novaEscala = TrocaEngine.executar({ funcAlvo: trocaAlvo.func, diaAlvo: trocaAlvo.dia, funcCandidato: candidato.funcionario, escalaAtual: escala });
+    const novaEscala = TrocaEngine.executar({
+      funcAlvo: trocaAlvo.func,
+      diaAlvo: trocaAlvo.dia,
+      funcCandidato: candidato.funcionario,
+      diaFolgaCandidato: candidato.diaFolgaAtual,
+      escalaAtual: escala,
+    });
     setEscala(novaEscala);
-    salvarSupabase(novaEscala, intervalos, cfgUnidades, funcionarios);
+    escalaRef.current = novaEscala;
+    salvarSupabase(novaEscala, intervRef.current, cfgRef.current, funcsRef.current);
     setAba("escala"); setTrocaAlvo(null);
   };
 
-  // ── helpers ──────────────────────────────────────────────────────
+  // ── helpers ───────────────────────────────────────────────────
   const lojas     = useMemo(() => [...new Set(funcionarios.map((f) => f.unidade))].sort(), [funcionarios]);
   const diasLista = useMemo(() => Array.from({ length: diasNum }, (_, i) => i + 1), [diasNum]);
+  const tituloMes = useMemo(() => {
+    const dt = new Date(dataInicio + "T12:00:00");
+    return `${MESES_PT[dt.getMonth()].toUpperCase()} DE ${dt.getFullYear()}`;
+  }, [dataInicio]);
 
   const setoresDaLoja = (loja) => {
     const p = [...new Set(funcionarios.filter((f) => f.unidade === loja).map((f) => f.setor))];
@@ -600,21 +674,19 @@ export default function EscalaFolga() {
     });
   };
 
+  // Ordenação por hierarquia de cargo, depois por nome
   const funcsDaLoja = (loja, setor, turno) =>
     funcionarios
       .filter((f) => f.unidade === loja && f.setor === setor && (!turno || f.turno === turno))
       .sort((a, b) => {
         if (a.cargoVago && !b.cargoVago) return 1;
         if (!a.cargoVago && b.cargoVago) return -1;
+        const ha = hierarquiaPos(a.funcao), hb = hierarquiaPos(b.funcao);
+        if (ha !== hb) return ha - hb;
         return a.nome.localeCompare(b.nome, "pt");
       });
 
   const lojasFiltradas = filtroLoja ? lojas.filter((l) => l === filtroLoja) : lojas;
-
-  const tituloMes = useMemo(() => {
-    const dt = new Date(dataInicio + "T12:00:00");
-    return `${MESES_PT[dt.getMonth()].toUpperCase()} DE ${dt.getFullYear()}`;
-  }, [dataInicio]);
 
   const getFeriasLabel = (func) => {
     if (!func.ferias) return null;
@@ -647,7 +719,7 @@ export default function EscalaFolga() {
   };
 
   // ═══════════════════════════════════════════════════════════════
-  // EXPORTAR XLSX
+  // EXPORTAR XLSX — FIX: garante que todos os dias sejam gravados
   // ═══════════════════════════════════════════════════════════════
   const exportarXLSX = () => {
     if (!funcionarios.length) return;
@@ -671,18 +743,23 @@ export default function EscalaFolga() {
         diaHCrit: { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FEF3C7" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
         nome:     { font: { name: "Arial", sz: 8  }, fill: { patternType: "none" }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
         vago:     { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "DDDDDD" } }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-        turnoM:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "1e40af" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("1e40af") },
-        turnoT:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("92400e") },
-        folga:    { fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
-        trab:     { fill: { patternType: "none" }, border: borda() },
-        ferias:   { font: { name: "Arial", sz: 7,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("166534") },
-        intNum:   { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "none" }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
+        turnoM:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "1e40af" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("1e40af") },
+        turnoT:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("92400e") },
+        // FIX XLSX: folga = preto sólido COM conteúdo vazio explícito
+        folga:    { font: { name: "Arial", sz: 8, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
+        trab:     { font: { name: "Arial", sz: 8 }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, border: borda() },
+        ferias:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("166534") },
+        intNum:   { font: { name: "Arial", sz: 8, bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
       };
+
+      // Snapshot da escala atual no momento da exportação
+      const escalaSnap = escalaRef.current;
+      const intervSnap = intervRef.current;
 
       lojas.forEach((loja) => {
         const ws = {}, merges = [];
         let row = 0;
-        const totalCols = 2 + diasNum;
+        const totalCols = 1 + diasNum; // col0=nome+turno mesclados, col1..N=dias
         const set = (r, c, v) => { ws[XLSX.utils.encode_cell({ r, c })] = v; };
         const criticos = [
           ...config.getDiasCriticos(loja),
@@ -690,52 +767,60 @@ export default function EscalaFolga() {
           ...config.getFeriados(loja),
         ];
 
-        // Título
+        // Título da loja
         set(row, 0, C(`${tituloMes} - ${loja}`, EST.titulo));
         merges.push({ s: { r: row, c: 0 }, e: { r: row, c: totalCols } });
         row++;
 
         setoresDaLoja(loja).forEach((setor) => {
-          // Cabeçalho setor
-          set(row, 0, C(setor, EST.setorH));
-          set(row, 1, C("T", EST.setorH));
+          // Cabeçalho setor — col0 = "SETOR | T", col1..N = dias
+          set(row, 0, C(`${setor}  |  T`, EST.setorH));
           for (let d = 1; d <= diasNum; d++) {
             const dow  = config.getDow(d);
             const fim  = dow === 0 || dow === 6;
             const crit = criticos.includes(d);
-            set(row, d + 1, C(`${DIAS7[dow]}\n${d}`, crit ? EST.diaHCrit : fim ? EST.diaHFim : EST.diaH));
+            set(row, d, C(`${DIAS7[dow]}\n${d}`, crit ? EST.diaHCrit : fim ? EST.diaHFim : EST.diaH));
           }
           row++;
 
           funcsDaLoja(loja, setor, "").forEach((func) => {
-            const eTurnoM = func.turno === "MANHÃ";
-            set(row, 0, C(func.cargoVago ? "CARGO VAGO" : func.nome, func.cargoVago ? EST.vago : EST.nome));
-            set(row, 1, C(eTurnoM ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0), eTurnoM ? EST.turnoM : EST.turnoT));
+            // col0 = "NOME | TURNO"
+            const turnoLetra = func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0);
+            const estiloNome = func.cargoVago ? EST.vago : EST.nome;
+            set(row, 0, C(func.cargoVago ? "CARGO VAGO" : `${func.nome}  |  ${turnoLetra}`, estiloNome));
+
+            if (func.cargoVago) {
+              for (let d = 1; d <= diasNum; d++) set(row, d, C("", EST.trab));
+              row++; return;
+            }
 
             const fspan = getFeriasSpan(func);
             if (fspan && func.ferias) {
+              // dias antes das férias
               for (let d = 1; d < fspan.inicio; d++) {
-                const v = escala[func.id]?.[d] || "T";
-                set(row, d + 1, C("", v === "F" ? EST.folga : EST.trab));
+                const v = escalaSnap[func.id]?.[d] || "T";
+                set(row, d, C("", v === "F" ? EST.folga : EST.trab));
               }
-              set(row, fspan.inicio + 1, C(getFeriasLabel(func), EST.ferias));
+              // bloco de férias (mesclado)
+              set(row, fspan.inicio, C(getFeriasLabel(func) || "FÉRIAS", EST.ferias));
               if (fspan.span > 1)
-                merges.push({ s: { r: row, c: fspan.inicio + 1 }, e: { r: row, c: fspan.fim + 1 } });
+                merges.push({ s: { r: row, c: fspan.inicio }, e: { r: row, c: fspan.fim } });
+              // dias após as férias
               for (let d = fspan.fim + 1; d <= diasNum; d++) {
-                const v = escala[func.id]?.[d] || "T";
-                set(row, d + 1, C("", v === "F" ? EST.folga : EST.trab));
+                const v = escalaSnap[func.id]?.[d] || "T";
+                set(row, d, C("", v === "F" ? EST.folga : EST.trab));
               }
             } else {
               for (let d = 1; d <= diasNum; d++) {
-                const v    = escala[func.id]?.[d] || "T";
+                const v    = escalaSnap[func.id]?.[d] || "T";
                 const dow  = config.getDow(d);
-                const intv = intervalos[`${func.id}_${d}`];
+                const intv = intervSnap[`${func.id}_${d}`];
                 if (v === "F") {
-                  set(row, d + 1, C("", EST.folga));
+                  set(row, d, C("", EST.folga));
                 } else if (dow === 0 && intv) {
-                  set(row, d + 1, C(intv, EST.intNum));
+                  set(row, d, C(intv, EST.intNum));
                 } else {
-                  set(row, d + 1, C("", EST.trab));
+                  set(row, d, C("", EST.trab));
                 }
               }
             }
@@ -743,11 +828,11 @@ export default function EscalaFolga() {
           });
         });
 
-        ws["!cols"]   = [{ wch: 24 }, { wch: 3 }, ...Array(diasNum).fill({ wch: 3.5 })];
+        // Largura das colunas: col0 mais larga (nome + turno), resto estreito
+        ws["!cols"]   = [{ wch: 26 }, ...Array(diasNum).fill({ wch: 3.5 })];
         ws["!merges"] = merges;
         ws["!ref"]    = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: totalCols } });
-        const nomePlanilha = loja.replace(/[:\\\/\?\*\[\]]/g, "").substring(0, 31);
-        XLSX.utils.book_append_sheet(wb, ws, nomePlanilha);
+        XLSX.utils.book_append_sheet(wb, ws, loja.replace(/[:\\\/\?\*\[\]]/g, "").substring(0, 31));
       });
 
       XLSX.writeFile(wb, `escala_${tituloMes.toLowerCase().replace(/ /g, "_")}.xlsx`);
@@ -758,7 +843,7 @@ export default function EscalaFolga() {
   };
 
   // ═══════════════════════════════════════════════════════════════
-  // RENDER — GUARDS
+  // GUARDS
   // ═══════════════════════════════════════════════════════════════
   if (authCarregando) {
     return (
@@ -767,7 +852,6 @@ export default function EscalaFolga() {
       </div>
     );
   }
-
   if (!sessao) return <TelaLogin onLogin={setSessao} />;
 
   // ═══════════════════════════════════════════════════════════════
@@ -775,9 +859,7 @@ export default function EscalaFolga() {
   // ═══════════════════════════════════════════════════════════════
   return (
     <div style={S.page}>
-      {feriasModal && (
-        <FeriasModal func={feriasModal} onSalvar={salvarFerias} onFechar={() => setFeriasModal(null)} />
-      )}
+      {feriasModal && <FeriasModal func={feriasModal} onSalvar={salvarFerias} onFechar={() => setFeriasModal(null)} />}
 
       <div style={S.wrap}>
         {/* Header */}
@@ -785,31 +867,29 @@ export default function EscalaFolga() {
           <div>
             <div style={S.hTitle}>⬛ Escala de Folgas</div>
             <div style={S.hSub}>
-              {tituloMes} ·{" "}
-              <span style={{ color: "#888" }}>{sessao.user.email}</span>
-              {salvando  && <span style={{ color: "#b45309", marginLeft: 8 }}>💾 Salvando...</span>}
-              {salvouOk  && <span style={{ color: "#166534", marginLeft: 8 }}>✅ Salvo</span>}
-              {carregandoDB && <span style={{ color: "#1d4ed8", marginLeft: 8 }}>⏳ Carregando dados...</span>}
+              {tituloMes} · <span style={{ color: "#888" }}>{sessao.user.email}</span>
+              {salvando     && <span style={{ color: "#b45309",  marginLeft: 10 }}>💾 Salvando...</span>}
+              {salvouOk     && <span style={{ color: "#166534",  marginLeft: 10 }}>✅ Salvo</span>}
+              {carregandoDB && <span style={{ color: "#1d4ed8",  marginLeft: 10 }}>⏳ Carregando...</span>}
             </div>
           </div>
           <div style={S.hControls}>
             <label style={S.lbl}>CSV:</label>
             <input type="file" accept=".csv" onChange={importarCSV} style={S.fileIn} />
             <label style={S.lbl}>Início:</label>
-            <input type="date" value={dataInicio}
-              onChange={(e) => setDataInicio(e.target.value)}
-              style={S.inp} />
+            <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} style={S.inp} />
             <label style={S.lbl}>Dias:</label>
             <input type="number" min={1} max={31} value={diasNum}
               onChange={(e) => {
                 const v = +e.target.value; setDiasNum(v);
-                if (funcionarios.length) {
-                  const nova = calcularEscala(funcionarios, new ConfiguracaoMes({ dataInicio, dias: v, unidades: garantirCfg(cfgUnidades, funcionarios.map((f) => f.unidade)) }));
-                  setEscala(nova);
-                  salvarSupabase(nova, intervalos, cfgUnidades, funcionarios);
+                if (funcsRef.current.length) {
+                  const cfg = new ConfiguracaoMes({ dataInicio, dias: v, unidades: garantirCfg(cfgRef.current, funcsRef.current.map((f) => f.unidade)) });
+                  const nova = calcularEscala(funcsRef.current, cfg);
+                  setEscala(nova); escalaRef.current = nova;
+                  salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
                 }
               }} style={{ ...S.inp, width: 58 }} />
-            <button onClick={() => gerarEscala(funcionarios, config)} style={S.btn}>🔄 Regerar</button>
+            <button onClick={() => gerarEscala(funcsRef.current, config)} style={S.btn}>🔄 Regerar</button>
             <button onClick={exportarXLSX} style={{ ...S.btn, ...S.btnR }}>📥 Exportar XLSX</button>
             <button onClick={() => sb.auth.signOut()} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000" }}>Sair</button>
           </div>
@@ -822,27 +902,22 @@ export default function EscalaFolga() {
             { id: "config",  label: "⚙️ Configuração" },
             { id: "alertas", label: `🔔 Alertas${alertas.length ? ` (${alertas.length})` : ""}` },
           ].map(({ id, label }) => (
-            <button key={id} onClick={() => setAba(id)} style={{ ...S.tab, ...(aba === id ? S.tabOn : {}) }}>{label}</button>
+            <button key={id} onClick={() => setAba(id)}
+              style={{ ...S.tab, ...(aba === id ? S.tabOn : {}) }}>{label}</button>
           ))}
         </div>
 
-        {/* ════ ABA CONFIG ════ */}
+        {/* ════ CONFIG ════ */}
         {aba === "config" && (
           <div style={{ paddingTop: 12 }}>
-            <p style={S.hint}>
-              Configurações são salvas automaticamente. Dias separados por vírgula (ex: 5, 20).
-            </p>
+            <p style={S.hint}>Configurações salvas automaticamente. Dias separados por vírgula (ex: 5, 20).</p>
             {(funcionarios.length ? lojas : ["LOJA 1","LOJA 2","LOJA 3"]).map((unidade) => {
               const cfg = cfgUnidades[unidade] || cfgVazia();
               return (
                 <div key={unidade} style={S.card}>
                   <div style={S.cardTit}>{unidade}</div>
                   <div style={S.grid3}>
-                    {[
-                      ["🔴 Oferta / Promoção",  "diasCriticos"],
-                      ["💰 Pagamento Salarial",  "diasPagamento"],
-                      ["🗓 Feriados",            "feriados"],
-                    ].map(([label, campo]) => (
+                    {[["🔴 Oferta / Promoção","diasCriticos"],["💰 Pagamento Salarial","diasPagamento"],["🗓 Feriados","feriados"]].map(([label, campo]) => (
                       <div key={campo}>
                         <label style={S.lbl}>{label}</label>
                         <input style={S.inpFull} placeholder="ex: 5, 20"
@@ -854,9 +929,9 @@ export default function EscalaFolga() {
                   <div style={{ marginTop: 12 }}>
                     <label style={S.lbl}>👥 Mínimo por setor/dia (0 = sem restrição)</label>
                     <div style={{ ...S.grid3, marginTop: 6 }}>
-                      {SETORES_ORDEM.slice(0, 16).map((setor) => (
+                      {SETORES_ORDEM.map((setor) => (
                         <div key={setor} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 11, color: "#444", minWidth: 130, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{setor}</span>
+                          <span style={{ fontSize: 11, color: "#444", minWidth: 140, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{setor}</span>
                           <input type="number" min={0} max={20} style={{ ...S.inp, width: 52 }}
                             defaultValue={cfg.minimosPorSetor?.[setor] ?? 1}
                             onBlur={(e) => setCfgCampo(unidade, "minimosPorSetor", {
@@ -874,13 +949,12 @@ export default function EscalaFolga() {
             {funcionarios.length > 0 && (
               <div style={S.card}>
                 <div style={S.cardTit}>🌴 Férias por Funcionário</div>
-                <p style={S.hint}>Férias são salvas automaticamente.</p>
+                <p style={S.hint}>Férias salvas automaticamente.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
                   {funcionarios.filter((f) => !f.cargoVago).map((f) => (
-                    <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: f.ferias ? "#f0fdf4" : "#fafafa", borderRadius: 6, border: "1px solid #e5e7eb" }}>
+                    <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: f.ferias ? "#f0fdf4" : "#fafafa", borderRadius: 6, border: "1px solid #ccc" }}>
                       <span style={{ fontSize: 12, flex: 1 }}>
-                        {f.nome}
-                        <span style={{ color: "#888", fontSize: 11 }}> ({f.funcao || f.setor} · {f.unidade})</span>
+                        {f.nome} <span style={{ color: "#888", fontSize: 11 }}>({f.funcao || f.setor} · {f.unidade})</span>
                       </span>
                       {f.ferias && (
                         <span style={{ fontSize: 11, color: "#166534", fontWeight: 600 }}>
@@ -901,34 +975,46 @@ export default function EscalaFolga() {
           </div>
         )}
 
-        {/* ════ ABA ALERTAS ════ */}
+        {/* ════ ALERTAS ════ */}
         {aba === "alertas" && (
           <div style={{ paddingTop: 12 }}>
+            {/* Legenda de tipos */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+              {[["❌ ERRO","cobertura mínima não atingida","#CC0000"],["⚠️ AVISO","dia crítico com cobertura no limite","#b45309"],["⏱ SOBRECARGA","funcionário com mais de 7 dias seguidos","#7c3aed"]].map(([icon, desc, cor]) => (
+                <div key={icon} style={{ fontSize: 11, color: cor, display: "flex", alignItems: "center", gap: 5 }}>
+                  <strong>{icon}</strong> — {desc}
+                </div>
+              ))}
+            </div>
             {alertas.length === 0
               ? <div style={S.empty}>✅ Nenhum alerta. Escala dentro dos parâmetros.</div>
-              : alertas.map((a, i) => (
-                <div key={i} style={{ ...S.alertCard, borderLeftColor: a.nivel === "erro" ? "#CC0000" : "#b45309" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span style={{ fontWeight: 700, color: a.nivel === "erro" ? "#CC0000" : "#b45309", fontSize: 12 }}>
-                      {a.nivel === "erro" ? "❌ ERRO" : "⚠️ AVISO"}
-                    </span>
-                    <span style={{ fontSize: 11, color: "#888" }}>Dia {a.dia}</span>
+              : alertas.map((a, i) => {
+                const corMap = { erro: "#CC0000", aviso: "#b45309", sobrecarga: "#7c3aed" };
+                const cor = a.tipo === "sobrecarga" ? "#7c3aed" : corMap[a.nivel] || "#CC0000";
+                const icon = a.tipo === "sobrecarga" ? "⏱" : a.nivel === "erro" ? "❌" : "⚠️";
+                const label = a.tipo === "sobrecarga" ? "SOBRECARGA" : a.nivel === "erro" ? "ERRO" : "AVISO";
+                return (
+                  <div key={i} style={{ ...S.alertCard, borderLeftColor: cor }}>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontWeight: 700, color: cor, fontSize: 12 }}>{icon} {label}</span>
+                      <span style={{ fontSize: 11, color: "#888" }}>Dia {a.dia}</span>
+                    </div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{a.msg}</div>
+                    {a.tipo === "critico" && a.funcIds?.length > 0 && (
+                      <button style={{ ...S.btn, marginTop: 8, fontSize: 11 }}
+                        onClick={() => {
+                          const func = funcionarios.find((f) => a.funcIds.includes(f.id));
+                          if (func) abrirTroca(func, a.dia);
+                        }}>🔄 Sugerir troca</button>
+                    )}
                   </div>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>{a.msg}</div>
-                  {a.tipo === "critico" && a.funcIds?.length > 0 && (
-                    <button style={{ ...S.btn, marginTop: 8, fontSize: 11 }}
-                      onClick={() => {
-                        const func = funcionarios.find((f) => a.funcIds.includes(f.id));
-                        if (func) abrirTroca(func, a.dia);
-                      }}>🔄 Sugerir troca</button>
-                  )}
-                </div>
-              ))
+                );
+              })
             }
           </div>
         )}
 
-        {/* ════ ABA TROCA ════ */}
+        {/* ════ TROCA ════ */}
         {aba === "troca" && trocaAlvo && (
           <div style={{ paddingTop: 12 }}>
             <div style={S.card}>
@@ -936,25 +1022,26 @@ export default function EscalaFolga() {
               <p style={{ fontSize: 13, marginBottom: 12 }}>
                 <strong>{trocaAlvo.func.nome}</strong>{" "}
                 <span style={{ color: "#888" }}>({trocaAlvo.func.setor} · {trocaAlvo.func.unidade})</span>{" "}
-                — Dia <strong>{trocaAlvo.dia}</strong>
+                — folga no dia <strong>{trocaAlvo.dia}</strong> será transferida para o colega selecionado, que cede a sua.
               </p>
               {trocaSugestoes.length === 0
-                ? <div style={S.empty}>Nenhum colega disponível para troca.</div>
+                ? <div style={S.empty}>Nenhum colega com folga disponível para troca.</div>
                 : trocaSugestoes.map((s, i) => (
                   <div key={i} style={{ ...S.alertCard, borderLeftColor: s.impacto === "alto" ? "#CC0000" : "#15803d", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
                       <div style={{ fontWeight: 600 }}>{s.funcionario.nome}</div>
                       <div style={{ fontSize: 11, color: "#666" }}>
-                        Folga atual: Dia {s.diaFolgaAtual ?? "–"} ·{" "}
+                        Cede a folga do dia <strong>{s.diaFolgaAtual}</strong> ·{" "}
                         <span style={{ color: s.impacto === "alto" ? "#CC0000" : "#15803d", fontWeight: 600 }}>Impacto {s.impacto}</span>
                       </div>
                     </div>
-                    <button onClick={() => executarTroca(s)} style={{ ...S.btn, ...S.btnR, fontSize: 11 }}>✅ Confirmar</button>
+                    <button onClick={() => executarTroca(s)} style={{ ...S.btn, ...S.btnR, fontSize: 11 }}>✅ Confirmar troca</button>
                   </div>
                 ))
               }
               <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-                <button onClick={() => { setAba("escala"); setTrocaAlvo(null); }} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000", fontWeight: 600 }}>
+                <button onClick={() => { setAba("escala"); setTrocaAlvo(null); }}
+                  style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000", fontWeight: 600 }}>
                   ⚠️ Manter sem trocas (assumir risco)
                 </button>
                 <button onClick={() => { setAba("escala"); setTrocaAlvo(null); }} style={S.btn}>← Cancelar</button>
@@ -963,7 +1050,7 @@ export default function EscalaFolga() {
           </div>
         )}
 
-        {/* ════ ABA ESCALA ════ */}
+        {/* ════ ESCALA ════ */}
         {aba === "escala" && (
           <>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
@@ -1019,8 +1106,7 @@ export default function EscalaFolga() {
                             <table style={{ borderCollapse: "collapse", fontSize: 10.5, tableLayout: "fixed", minWidth: "100%" }}>
                               <thead>
                                 <tr>
-                                  <th style={{ ...S.thSetor, width: 160 }}>{setor}</th>
-                                  <th style={{ ...S.thSetor, width: 22, fontSize: 8 }}>T</th>
+                                  <th style={{ ...S.thSetor, width: 180 }}>{setor}</th>
                                   {diasLista.map((d) => {
                                     const dow  = config.getDow(d);
                                     const fim  = dow === 0 || dow === 6;
@@ -1039,8 +1125,9 @@ export default function EscalaFolga() {
                                   if (func.cargoVago) {
                                     return (
                                       <tr key={func.id} style={{ background: "#ddd" }}>
-                                        <td style={{ ...S.tdNome, color: "#888", fontSize: 10 }}>CARGO VAGO</td>
-                                        <td style={{ ...S.tdDia, background: "#ddd" }} />
+                                        <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic" }}>
+                                          CARGO VAGO — {func.funcao}
+                                        </td>
                                         {diasLista.map((d) => <td key={d} style={{ ...S.tdDia, background: "#ddd" }} />)}
                                       </tr>
                                     );
@@ -1053,18 +1140,23 @@ export default function EscalaFolga() {
                                   return (
                                     <tr key={func.id}>
                                       <td style={S.tdNome}>
-                                        {func.nome}
-                                        {badgeRegime(func)}
-                                        {func.ferias && (
-                                          <span onClick={() => setFeriasModal(func)} title="Editar férias"
-                                            style={{ cursor: "pointer", marginLeft: 4, fontSize: 9, color: "#166534" }}>🌴</span>
-                                        )}
-                                      </td>
-                                      <td style={{ ...S.tdDia, background: turnoColor, color: "#fff", fontSize: 8, fontWeight: 700, textAlign: "center" }}>
-                                        {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
+                                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                          <span style={{ display: "inline-block", background: turnoColor, color: "#fff", fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "1px 3px", flexShrink: 0 }}>
+                                            {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
+                                          </span>
+                                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{func.nome}</span>
+                                          {badgeRegime(func)}
+                                          {func.ferias && (
+                                            <span onClick={() => setFeriasModal(func)} title="Editar férias"
+                                              style={{ cursor: "pointer", fontSize: 9, color: "#166534", flexShrink: 0 }}>🌴</span>
+                                          )}
+                                        </div>
+                                        <div style={{ fontSize: 8, color: "#888", marginTop: 1, paddingLeft: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                          {func.funcao}
+                                        </div>
                                       </td>
 
-                                      {(fspan && fLabel ? diasLista : diasLista).map((d) => {
+                                      {diasLista.map((d) => {
                                         if (fspan && fLabel) {
                                           if (d === fspan.inicio) {
                                             return (
@@ -1129,12 +1221,12 @@ function FeriasModal({ func, onSalvar, onFechar }) {
             <div key={label}>
               <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Data de {label}</label>
               <input type="date" value={val} onChange={(e) => set(e.target.value)}
-                style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid #d1d5db", boxSizing: "border-box" }} />
+                style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid #999", boxSizing: "border-box" }} />
             </div>
           ))}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
-          <button onClick={onFechar} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "1px solid #d1d5db", background: "#f9fafb", cursor: "pointer" }}>Cancelar</button>
+          <button onClick={onFechar} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "1px solid #999", background: "#f9fafb", cursor: "pointer" }}>Cancelar</button>
           <button disabled={!inicio || !fim || inicio > fim}
             onClick={() => onSalvar(func.id, inicio, fim)}
             style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "none", background: "#166534", color: "#fff", cursor: "pointer", opacity: (!inicio || !fim || inicio > fim) ? 0.5 : 1 }}>
@@ -1169,11 +1261,11 @@ const S = {
   empty:     { textAlign: "center", padding: "2.5rem 1rem", color: "#aaa", border: "2px dashed #ccc", borderRadius: 8 },
   card:      { border: "1px solid #ccc", borderRadius: 7, padding: ".9rem", marginBottom: "1rem" },
   cardTit:   { fontSize: 13, fontWeight: 700, color: "#111", marginBottom: 10 },
-  grid3:     { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 },
+  grid3:     { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 },
   alertCard: { borderLeft: "4px solid #CC0000", background: "#fafafa", borderRadius: 5, padding: "9px 12px", marginBottom: 7 },
   lojaH:     { background: "#000", color: "#fff", fontWeight: 700, fontSize: 13, padding: "7px 12px", textAlign: "center", letterSpacing: ".06em" },
   thSetor:   { background: "#000", color: "#fff", fontWeight: 700, fontSize: 10, padding: "5px 6px", textAlign: "center", border: "1px solid #333", position: "sticky", left: 0, zIndex: 1 },
   thDia:     { padding: "2px 1px", border: "1px solid #999", textAlign: "center", fontWeight: 600 },
-  tdNome:    { padding: "2px 6px", border: "1px solid #999", fontWeight: 400, fontSize: 10.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, background: "#fff", position: "sticky", left: 0, zIndex: 0 },
-  tdDia:     { padding: 0, border: "1px solid #999", height: 20, textAlign: "center" },
+  tdNome:    { padding: "3px 6px", border: "1px solid #999", fontWeight: 400, fontSize: 10.5, maxWidth: 180, background: "#fff", position: "sticky", left: 0, zIndex: 0 },
+  tdDia:     { padding: 0, border: "1px solid #999", height: 22, textAlign: "center" },
 };
