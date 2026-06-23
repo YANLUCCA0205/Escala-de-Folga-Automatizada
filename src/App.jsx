@@ -566,7 +566,23 @@ export default function EscalaFolga() {
 
       setFuncionarios(dados);
       funcsRef.current = dados;
-      const novaEscala = calcularEscala(dados, new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs }));
+      
+      const configObj = new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs });
+      const escalaCalculada = calcularEscala(dados, configObj);
+      
+      // Se já existe uma escala carregada do banco, preserva os dados manuais
+      // e só calcula para funcionários novos que não estavam na escala
+      const escalaExistente = escalaRef.current;
+      let novaEscala = {};
+      if (Object.keys(escalaExistente).length > 0) {
+        novaEscala = { ...escalaExistente };
+        dados.forEach((f) => {
+          if (!novaEscala[f.id]) novaEscala[f.id] = escalaCalculada[f.id];
+        });
+      } else {
+        novaEscala = escalaCalculada;
+      }
+
       setEscala(novaEscala);
       escalaRef.current = novaEscala;
       salvarSupabase(novaEscala, intervalos, novasCfgs, dados);
