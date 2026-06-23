@@ -129,7 +129,7 @@ class ConfiguracaoMes {
 }
 
 class FuncionarioModel {
-  constructor({ id, nome, setor, funcao, turno, unidade, regimeFolga }) {
+  constructor({ id, nome, setor, funcao, turno, unidade, regimeFolga, ordem }) {
     this.id          = String(id);
     this.nome        = nome.trim();
     this.setor       = setor.trim();
@@ -137,6 +137,7 @@ class FuncionarioModel {
     this.turno       = (turno  || "").trim();
     this.unidade     = unidade.trim();
     this.regimeFolga = regimeFolga;
+    this.ordem       = ordem;
     this.ferias      = null;
     this.cargoVago   = false;
     this._escProvisoria = {};
@@ -390,7 +391,10 @@ export default function EscalaFolga() {
   const [funcionarios,   setFuncionarios]   = useState([]);
   const [escala,         setEscala]         = useState({});
   const [intervalos,     setIntervalos]     = useState({});
-  const [diasNum,        setDiasNum]        = useState(31);
+  const [diasNum,        setDiasNum]        = useState(() => {
+    const dt = new Date("2026-05-01T12:00:00");
+    return new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+  });
   const [dataInicio,     setDataInicio]     = useState("2026-05-01");
   const [aba,            setAba]            = useState("escala");
   const [trocaAlvo,      setTrocaAlvo]      = useState(null);
@@ -408,6 +412,7 @@ export default function EscalaFolga() {
   const escalaRef   = useRef({});
   const intervRef   = useRef({});
   const cfgRef      = useRef({});
+  const feriasRef   = useRef({});
 
   // mantém refs sincronizados para uso no debounce
   useEffect(() => { funcsRef.current  = funcionarios; }, [funcionarios]);
@@ -455,8 +460,18 @@ export default function EscalaFolga() {
         escalaRef.current = escMerge;
         setIntervalos(intMerge);
         intervRef.current = intMerge;
+        // Sempre persiste férias no ref para uso ao reimportar CSV
         if (Object.keys(feriasPorFunc).length) {
-          setFuncionarios((prev) => prev.map((f) => ({ ...f, ferias: feriasPorFunc[f.id] ?? f.ferias })));
+          feriasRef.current = { ...feriasRef.current, ...feriasPorFunc };
+          setFuncionarios((prev) => {
+            if (!prev.length) return prev;
+            return prev.map((f) => {
+              const ferias = feriasPorFunc[f.id] ?? f.ferias;
+              const upd = Object.assign(Object.create(Object.getPrototypeOf(f)), f);
+              upd.ferias = ferias || null;
+              return upd;
+            });
+          });
         }
       }
     } catch (e) { console.error("Erro ao carregar:", e); }
@@ -530,6 +545,7 @@ export default function EscalaFolga() {
         const f = new FuncionarioModel({
           id: num || String(Math.random()), nome, setor, funcao, turno,
           unidade: loja, regimeFolga: parseRegimeFolga(folgas),
+          ordem: parseInt(num) || 9999,
         });
         f.cargoVago = nome.toUpperCase().includes("CARGO VAGO");
         return f;
@@ -538,6 +554,15 @@ export default function EscalaFolga() {
       const novasCfgs = garantirCfg(cfgUnidades, dados.map((f) => f.unidade));
       setCfgUnidades(novasCfgs);
       cfgRef.current = novasCfgs;
+
+      // Restaura férias salvas no banco para os funcionários reimportados
+      const feriasSalvas = feriasRef.current;
+      if (Object.keys(feriasSalvas).length) {
+        dados.forEach((f) => {
+          if (feriasSalvas[f.id]) f.ferias = feriasSalvas[f.id];
+        });
+      }
+
       setFuncionarios(dados);
       funcsRef.current = dados;
       const novaEscala = calcularEscala(dados, new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: novasCfgs }));
@@ -605,6 +630,13 @@ export default function EscalaFolga() {
 
   // ── férias ────────────────────────────────────────────────────
   const salvarFerias = (funcId, inicio, fim) => {
+    // Mantém feriasRef sincronizado para persistir ao reimportar CSV
+    if (inicio && fim) {
+      feriasRef.current = { ...feriasRef.current, [funcId]: { inicio, fim } };
+    } else {
+      const { [funcId]: _, ...rest } = feriasRef.current;
+      feriasRef.current = rest;
+    }
     setFuncionarios((prev) => {
       const nova = prev.map((f) => {
         if (f.id !== funcId) return f;
@@ -667,10 +699,12 @@ export default function EscalaFolga() {
   }, [dataInicio]);
 
   const setoresDaLoja = (loja) => {
-    const p = [...new Set(funcionarios.filter((f) => f.unidade === loja).map((f) => f.setor))];
+    const funcsLoja = funcionarios.filter((f) => f.unidade === loja);
+    const p = [...new Set(funcsLoja.map((f) => f.setor))];
     return p.sort((a, b) => {
-      const ia = SETORES_ORDEM.indexOf(a), ib = SETORES_ORDEM.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      const minA = Math.min(...funcsLoja.filter((f) => f.setor === a).map((f) => f.ordem));
+      const minB = Math.min(...funcsLoja.filter((f) => f.setor === b).map((f) => f.ordem));
+      return minA - minB;
     });
   };
 
@@ -681,9 +715,7 @@ export default function EscalaFolga() {
       .sort((a, b) => {
         if (a.cargoVago && !b.cargoVago) return 1;
         if (!a.cargoVago && b.cargoVago) return -1;
-        const ha = hierarquiaPos(a.funcao), hb = hierarquiaPos(b.funcao);
-        if (ha !== hb) return ha - hb;
-        return a.nome.localeCompare(b.nome, "pt");
+        return a.ordem - b.ordem;
       });
 
   const lojasFiltradas = filtroLoja ? lojas.filter((l) => l === filtroLoja) : lojas;
@@ -877,7 +909,24 @@ export default function EscalaFolga() {
             <label style={S.lbl}>CSV:</label>
             <input type="file" accept=".csv" onChange={importarCSV} style={S.fileIn} />
             <label style={S.lbl}>Início:</label>
-            <input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} style={S.inp} />
+            <input type="date" value={dataInicio} onChange={(e) => {
+              const novaData = e.target.value;
+              const dt = new Date(novaData + "T12:00:00");
+              const novoDias = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+              setDataInicio(novaData);
+              setDiasNum(novoDias);
+              if (funcsRef.current.length) {
+                const cfg = new ConfiguracaoMes({
+                  dataInicio: novaData,
+                  dias: novoDias,
+                  unidades: garantirCfg(cfgRef.current, funcsRef.current.map((f) => f.unidade))
+                });
+                const nova = calcularEscala(funcsRef.current, cfg);
+                setEscala(nova);
+                escalaRef.current = nova;
+                salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
+              }
+            }} style={S.inp} />
             <label style={S.lbl}>Dias:</label>
             <input type="number" min={1} max={31} value={diasNum}
               onChange={(e) => {
