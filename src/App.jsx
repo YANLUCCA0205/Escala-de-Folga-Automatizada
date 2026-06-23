@@ -407,6 +407,7 @@ export default function EscalaFolga() {
   const [salvando,       setSalvando]       = useState(false);
   const [salvouOk,       setSalvouOk]       = useState(false);
   const [carregandoDB,   setCarregandoDB]   = useState(false);
+  const [revisarMap,     setRevisarMap]     = useState({});
   const salvarTimer = useRef(null);
   const funcsRef    = useRef([]);
   const escalaRef   = useRef({});
@@ -788,6 +789,11 @@ export default function EscalaFolga() {
       salvarSupabase(escalaRef.current, intervRef.current, novas, funcsRef.current);
       return novas;
     });
+  };
+
+  // ── revisão ───────────────────────────────────────────────────
+  const toggleRevisar = (funcId) => {
+    setRevisarMap(prev => ({ ...prev, [funcId]: !prev[funcId] }));
   };
 
   // ── alertas ───────────────────────────────────────────────────
@@ -1316,11 +1322,13 @@ export default function EscalaFolga() {
                                   const fspan  = getFeriasSpan(func);
                                   const fLabel = getFeriasLabel(func);
                                   const turnoColor = func.turno === "MANHÃ" ? "#1e40af" : "#92400e";
+                                  const emRevisao = revisarMap[func.id];
 
                                   return (
-                                    <tr key={func.id}>
-                                      <td style={S.tdNome}>
+                                    <tr key={func.id} style={{ background: emRevisao ? "#fef08a" : "transparent", transition: "background 0.2s" }}>
+                                      <td style={{ ...S.tdNome, cursor: "pointer" }} onClick={() => toggleRevisar(func.id)} title="Clique para marcar/desmarcar para revisão">
                                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                          {emRevisao && <span style={{ fontSize: 10 }} title="Marcado para revisão">⚠️</span>}
                                           <span style={{ display: "inline-block", background: turnoColor, color: "#fff", fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "1px 3px", flexShrink: 0 }}>
                                             {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
                                           </span>
