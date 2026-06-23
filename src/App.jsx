@@ -695,6 +695,7 @@ export default function EscalaFolga() {
   const diasLista = useMemo(() => Array.from({ length: diasNum }, (_, i) => i + 1), [diasNum]);
   const tituloMes = useMemo(() => {
     const dt = new Date(dataInicio + "T12:00:00");
+    if (isNaN(dt.getTime())) return "—";
     return `${MESES_PT[dt.getMonth()].toUpperCase()} DE ${dt.getFullYear()}`;
   }, [dataInicio]);
 
@@ -911,7 +912,9 @@ export default function EscalaFolga() {
             <label style={S.lbl}>Início:</label>
             <input type="date" value={dataInicio} onChange={(e) => {
               const novaData = e.target.value;
+              if (!novaData) return;
               const dt = new Date(novaData + "T12:00:00");
+              if (isNaN(dt.getTime())) return;
               const novoDias = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
               setDataInicio(novaData);
               setDiasNum(novoDias);
