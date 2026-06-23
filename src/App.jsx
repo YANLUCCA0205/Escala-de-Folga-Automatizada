@@ -437,7 +437,7 @@ export default function EscalaFolga() {
       const salvos = localStorage.getItem("funcionarios_salvos");
       if (salvos) {
         const parsed = JSON.parse(salvos);
-        const refaturados = parsed.map(f => Object.assign(new FuncionarioModel({}), f));
+        const refaturados = parsed.map(f => Object.assign(Object.create(FuncionarioModel.prototype), f));
         setFuncionarios(refaturados);
       }
     } catch(e) { console.error("Erro ao ler funcionarios salvos", e); }
