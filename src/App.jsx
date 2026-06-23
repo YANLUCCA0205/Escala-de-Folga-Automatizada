@@ -407,6 +407,8 @@ export default function EscalaFolga() {
   const [salvando,       setSalvando]       = useState(false);
   const [salvouOk,       setSalvouOk]       = useState(false);
   const [carregandoDB,   setCarregandoDB]   = useState(false);
+  const [modoLimpeza,    setModoLimpeza]    = useState(false);
+  const [selecsLimpeza,  setSelecsLimpeza]  = useState(new Set());
   const salvarTimer = useRef(null);
   const funcsRef    = useRef([]);
   const escalaRef   = useRef({});
@@ -429,6 +431,17 @@ export default function EscalaFolga() {
       setAuthCarregando(false);
     });
     const { data: { subscription } } = sb.auth.onAuthStateChange((_e, s) => setSessao(s));
+    
+    // Tenta reidratar os funcionários salvos no localStorage
+    try {
+      const salvos = localStorage.getItem("funcionarios_salvos");
+      if (salvos) {
+        const parsed = JSON.parse(salvos);
+        const refaturados = parsed.map(f => Object.assign(new FuncionarioModel({}), f));
+        setFuncionarios(refaturados);
+      }
+    } catch(e) { console.error("Erro ao ler funcionarios salvos", e); }
+
     return () => subscription.unsubscribe();
   }, []);
 
@@ -585,6 +598,8 @@ export default function EscalaFolga() {
       setEscala(novaEscala);
       escalaRef.current = novaEscala;
       salvarSupabase(novaEscala, intervalos, novasCfgs, dados);
+
+      try { localStorage.setItem("funcionarios_salvos", JSON.stringify(dados)); } catch (e) { console.error(e); }
     };
     leitor.readAsArrayBuffer(arquivo);
   };
@@ -815,6 +830,41 @@ export default function EscalaFolga() {
       escalaRef.current = nova;
       salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
       return nova;
+    });
+  };
+
+  // ── modo limpeza em lote ──────────────────────────────────────
+  const confirmarLimpeza = () => {
+    if (selecsLimpeza.size === 0) return;
+    setEscala((prev) => {
+      const nova = { ...prev };
+      selecsLimpeza.forEach((id) => {
+        const funcEscala = { ...nova[id] };
+        for (let d = 1; d <= diasNum; d++) {
+          if (funcEscala[d] === "F" || funcEscala[d] === "A") {
+            funcEscala[d] = "T";
+          }
+        }
+        nova[id] = funcEscala;
+      });
+      escalaRef.current = nova;
+      salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
+      return nova;
+    });
+    setSelecsLimpeza(new Set());
+    setModoLimpeza(false);
+  };
+
+  const toggleLimpezaSetor = (setorLista) => {
+    setSelecsLimpeza((prev) => {
+      const novo = new Set(prev);
+      const allSelected = setorLista.every((f) => novo.has(f.id));
+      if (allSelected) {
+        setorLista.forEach((f) => novo.delete(f.id));
+      } else {
+        setorLista.forEach((f) => novo.add(f.id));
+      }
+      return novo;
     });
   };
 
@@ -1063,7 +1113,17 @@ export default function EscalaFolga() {
           </div>
           <div style={S.hControls}>
             <label style={S.lbl}>CSV:</label>
-            <input type="file" accept=".csv" onChange={importarCSV} style={S.fileIn} />
+            {funcionarios.length === 0 ? (
+              <input type="file" accept=".csv" onChange={importarCSV} style={S.fileIn} />
+            ) : (
+              <button onClick={() => {
+                if (window.confirm("Isso removerá a tabela atual da tela para você importar um novo CSV. Continuar?")) {
+                  setFuncionarios([]);
+                  funcsRef.current = [];
+                  localStorage.removeItem("funcionarios_salvos");
+                }
+              }} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000" }}>🗑️ Trocar Tabela</button>
+            )}
             <label style={S.lbl}>Início:</label>
             <input type="date" value={dataInicio} onChange={(e) => {
               const novaData = e.target.value;
@@ -1096,6 +1156,7 @@ export default function EscalaFolga() {
                   salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
                 }
               }} style={{ ...S.inp, width: 58 }} />
+            <button onClick={() => setModoLimpeza(!modoLimpeza)} style={{ ...S.btn, backgroundColor: modoLimpeza ? "#fee2e2" : "transparent" }}>🧹 Limpeza em Lote</button>
             <button onClick={() => gerarEscala(funcsRef.current, config)} style={S.btn}>🔄 Regerar</button>
             <button onClick={salvarEstadoFolgas} style={{ ...S.btn, backgroundColor: "#28a745", color: "#fff", borderColor: "#28a745" }}>💾 Salvar estado atual das folgas</button>
             <button onClick={exportarXLSX} style={{ ...S.btn, ...S.btnR }}>📥 Exportar XLSX</button>
@@ -1285,6 +1346,17 @@ export default function EscalaFolga() {
               </div>
             </div>
 
+            {modoLimpeza && (
+              <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 6, padding: "8px 12px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#991b1b" }}>🧹 Modo de Limpeza:</span>
+                <span style={{ fontSize: 12, color: "#7f1d1d" }}>Selecione os funcionários (ou clique no setor) para remover todas as folgas ("F" e "A").</span>
+                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                  <button onClick={confirmarLimpeza} style={{ ...S.btn, backgroundColor: "#dc2626", color: "#fff", borderColor: "#dc2626" }}>Confirmar ({selecsLimpeza.size})</button>
+                  <button onClick={() => { setSelecsLimpeza(new Set()); setModoLimpeza(false); }} style={{ ...S.btn, color: "#555" }}>Cancelar</button>
+                </div>
+              </div>
+            )}
+
             {alertas.filter((a) => a.nivel === "erro").length > 0 && (
               <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 6, padding: "8px 12px", marginBottom: 10, fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
                 ❌ <strong>{alertas.filter((a) => a.nivel === "erro").length}</strong> erro(s) de cobertura.
@@ -1314,7 +1386,11 @@ export default function EscalaFolga() {
                             <table style={{ borderCollapse: "collapse", fontSize: 10.5, tableLayout: "fixed", minWidth: "100%" }}>
                               <thead>
                                 <tr>
-                                  <th style={{ ...S.thSetor, width: 180 }}>{setor}</th>
+                                  <th style={{ ...S.thSetor, width: 180, cursor: modoLimpeza ? "pointer" : "default" }}
+                                      onClick={() => modoLimpeza && toggleLimpezaSetor(lista)}
+                                      title={modoLimpeza ? "Clique para selecionar todo o setor" : ""}>
+                                    {setor} {modoLimpeza && <span style={{ fontSize: 10, color: "#dc2626", fontWeight: "normal" }}><br/>[Selecionar Todos]</span>}
+                                  </th>
                                   {diasLista.map((d) => {
                                     const dow  = config.getDow(d);
                                     const fim  = dow === 0 || dow === 6;
@@ -1345,12 +1421,26 @@ export default function EscalaFolga() {
                                   const fLabel = getFeriasLabel(func);
                                   const turnoColor = func.turno === "MANHÃ" ? "#1e40af" : "#92400e";
                                   const emRevisao = escala[func.id]?.R;
+                                  const emLimpeza = selecsLimpeza.has(func.id);
+                                  
+                                  const trBg = emLimpeza ? "#fee2e2" : emRevisao ? "#fef08a" : "transparent";
 
                                   return (
-                                    <tr key={func.id} style={{ background: emRevisao ? "#fef08a" : "transparent", transition: "background 0.2s" }}>
-                                      <td style={{ ...S.tdNome, cursor: "pointer" }} onClick={() => toggleRevisar(func.id)} title="Clique para marcar/desmarcar para revisão">
+                                    <tr key={func.id} style={{ background: trBg, transition: "background 0.2s" }}>
+                                      <td style={{ ...S.tdNome, cursor: "pointer" }} 
+                                          onClick={() => {
+                                            if (modoLimpeza) {
+                                              setSelecsLimpeza((prev) => { const n = new Set(prev); n.has(func.id) ? n.delete(func.id) : n.add(func.id); return n; });
+                                            } else {
+                                              toggleRevisar(func.id);
+                                            }
+                                          }} 
+                                          title={modoLimpeza ? "Selecionar para limpeza" : "Clique para marcar/desmarcar para revisão"}>
                                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                          {emRevisao && <span style={{ fontSize: 10 }} title="Marcado para revisão">⚠️</span>}
+                                          {modoLimpeza && (
+                                            <input type="checkbox" checked={emLimpeza} readOnly style={{ margin: 0, cursor: "pointer" }} />
+                                          )}
+                                          {!modoLimpeza && emRevisao && <span style={{ fontSize: 10 }} title="Marcado para revisão">⚠️</span>}
                                           <span style={{ display: "inline-block", background: turnoColor, color: "#fff", fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "1px 3px", flexShrink: 0 }}>
                                             {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
                                           </span>
@@ -1380,15 +1470,26 @@ export default function EscalaFolga() {
                                         const v    = escala[func.id]?.[d] || "T";
                                         const dow  = config.getDow(d);
                                         const intv = intervalos[`${func.id}_${d}`];
+                                        
+                                        const getCellBg = () => {
+                                          if (emLimpeza) return "transparent";
+                                          if (emRevisao) {
+                                            if (v === "F") return "#4a4a10";
+                                            if (v === "A") return "#a3a360";
+                                            return "transparent";
+                                          }
+                                          return v === "F" ? "#000" : v === "A" ? "#888" : "#fff";
+                                        };
+
                                         return (
                                           <td key={d}
-                                            style={{ ...S.tdDia, background: v === "F" ? "#000" : v === "A" ? "#888" : "#fff", cursor: "pointer" }}
-                                            onClick={() => v !== "V" && alternar(func.id, d)}
-                                            onContextMenu={(e) => { e.preventDefault(); if (v === "F" || v === "A") abrirTroca(func, d); }}
+                                            style={{ ...S.tdDia, background: getCellBg(), cursor: modoLimpeza ? "default" : "pointer" }}
+                                            onClick={() => !modoLimpeza && v !== "V" && alternar(func.id, d)}
+                                            onContextMenu={(e) => { e.preventDefault(); if (!modoLimpeza && (v === "F" || v === "A")) abrirTroca(func, d); }}
                                             title={v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
                                             {dow === 0 && v === "T" && (
-                                              <span onClick={(ev) => { ev.stopPropagation(); alternarIntervalo(func.id, d); }}
-                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: "pointer", display: "block", textAlign: "center" }}>
+                                              <span onClick={(ev) => { ev.stopPropagation(); !modoLimpeza && alternarIntervalo(func.id, d); }}
+                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: modoLimpeza ? "default" : "pointer", display: "block", textAlign: "center" }}>
                                                 {intv || ""}
                                               </span>
                                             )}
