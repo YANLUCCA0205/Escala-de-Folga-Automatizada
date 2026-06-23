@@ -613,14 +613,25 @@ export default function EscalaFolga() {
       grupo.forEach((func, idx) => {
         if (func.cargoVago) { nova[func.id] = {}; return; }
         if (func.ferias) {
-          nova[func.id] = {};
-          for (let d = 1; d <= cfg.dias; d++) {
-            const iso = cfg.getDataDia(d).toISOString().slice(0, 10);
-            nova[func.id][d] = (iso >= func.ferias.inicio && iso <= func.ferias.fim) ? "V" : "T";
+          const af = func.ferias;
+          if (af.tipo === "ADM") {
+            const esc = gerarEscalaFuncionario(func, idx, grupo, cfg);
+            for (let d = 1; d <= cfg.dias; d++) {
+              if (cfg.getDataDia(d).toISOString().slice(0, 10) < af.inicio) {
+                esc[d] = "ADM";
+              }
+            }
+            nova[func.id] = esc;
+          } else {
+            nova[func.id] = {};
+            for (let d = 1; d <= cfg.dias; d++) {
+              const iso = cfg.getDataDia(d).toISOString().slice(0, 10);
+              nova[func.id][d] = (iso >= af.inicio && iso <= af.fim) ? (af.tipo === "LM" ? "LM" : "V") : "T";
+            }
           }
-          return;
+        } else {
+          nova[func.id] = gerarEscalaFuncionario(func, idx, grupo, cfg);
         }
-        nova[func.id] = gerarEscalaFuncionario(func, idx, grupo, cfg);
       });
     });
     return nova;
@@ -645,15 +656,15 @@ export default function EscalaFolga() {
   };
 
   // ── intervalo domingo ─────────────────────────────────────────
-  const alterarIntervaloDomingo = (id, valor) => {
+  // ── intervalo domingo ─────────────────────────────────────────
+  const alternarIntervalo = (id, dia) => {
+    const key = `${id}_${dia}`;
     setIntervalos((prev) => {
       let novo;
-      if (valor === "N00") {
-        novo = { ...prev };
-        delete novo[id];
-      } else {
-        novo = { ...prev, [id]: valor };
-      }
+      const cur = prev[key];
+      if (!cur) novo = { ...prev, [key]: "1" };
+      else if (cur === "4") { novo = { ...prev }; delete novo[key]; }
+      else novo = { ...prev, [key]: String(Number(cur) + 1) };
       intervRef.current = novo;
       salvarSupabase(escalaRef.current, novo, cfgRef.current, funcsRef.current);
       return novo;
@@ -661,10 +672,10 @@ export default function EscalaFolga() {
   };
 
   // ── férias ────────────────────────────────────────────────────
-  const salvarFerias = (funcId, inicio, fim) => {
-    // Mantém feriasRef sincronizado para persistir ao reimportar CSV
-    if (inicio && fim) {
-      feriasRef.current = { ...feriasRef.current, [funcId]: { inicio, fim } };
+  // ── afastamentos (Férias, LM, ADM) ────────────────────────────
+  const salvarAfastamento = (funcId, tipo, inicio, fim) => {
+    if (inicio) {
+      feriasRef.current = { ...feriasRef.current, [funcId]: { tipo, inicio, fim } };
     } else {
       const { [funcId]: _, ...rest } = feriasRef.current;
       feriasRef.current = rest;
@@ -673,7 +684,7 @@ export default function EscalaFolga() {
       const nova = prev.map((f) => {
         if (f.id !== funcId) return f;
         const upd = Object.assign(Object.create(Object.getPrototypeOf(f)), f);
-        upd.ferias = inicio && fim ? { inicio, fim } : null;
+        upd.ferias = inicio ? { tipo, inicio, fim } : null;
         return upd;
       });
       funcsRef.current = nova;
@@ -1098,7 +1109,8 @@ export default function EscalaFolga() {
   // ═══════════════════════════════════════════════════════════════
   return (
     <div style={S.page}>
-      {feriasModal && <FeriasModal func={feriasModal} onSalvar={salvarFerias} onFechar={() => setFeriasModal(null)} />}
+      {/* ── MODAIS ── */}
+      {feriasModal && <AfastamentoModal func={feriasModal} onSalvar={salvarAfastamento} onFechar={() => setFeriasModal(null)} />}
 
       <div style={S.wrap}>
         {/* Header */}
@@ -1218,8 +1230,8 @@ export default function EscalaFolga() {
 
             {funcionarios.length > 0 && (
               <div style={S.card}>
-                <div style={S.cardTit}>🌴 Férias por Funcionário</div>
-                <p style={S.hint}>Férias salvas automaticamente.</p>
+                <div style={S.cardTit}>🌴 Afastamentos (Férias, LM, Admissão)</div>
+                <p style={S.hint}>Afastamentos salvos automaticamente.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
                   {funcionarios.filter((f) => !f.cargoVago).map((f) => (
                     <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", background: f.ferias ? "#f0fdf4" : "#fafafa", borderRadius: 6, border: "1px solid #ccc" }}>
@@ -1228,14 +1240,18 @@ export default function EscalaFolga() {
                       </span>
                       {f.ferias && (
                         <span style={{ fontSize: 11, color: "#166534", fontWeight: 600 }}>
-                          🌴 {f.ferias.inicio.split("-").reverse().join("/")} → {f.ferias.fim.split("-").reverse().join("/")}
+                          {f.ferias.tipo === "ADM" 
+                            ? `🏢 Admissão: ${f.ferias.inicio.split("-").reverse().join("/")}` 
+                            : f.ferias.tipo === "LM" 
+                              ? `👶 LM: ${f.ferias.inicio.split("-").reverse().join("/")} → ${f.ferias.fim.split("-").reverse().join("/")}`
+                              : `🌴 Férias: ${f.ferias.inicio.split("-").reverse().join("/")} → ${f.ferias.fim.split("-").reverse().join("/")}`}
                         </span>
                       )}
                       <button onClick={() => setFeriasModal(f)} style={{ ...S.btn, fontSize: 11, padding: "4px 10px" }}>
-                        {f.ferias ? "✏️ Editar" : "+ Férias"}
+                        {f.ferias ? "✏️ Editar" : "+ Afastamento"}
                       </button>
                       {f.ferias && (
-                        <button onClick={() => salvarFerias(f.id, null, null)} style={{ ...S.btn, fontSize: 11, color: "#CC0000", padding: "4px 8px" }}>✕</button>
+                        <button onClick={() => salvarAfastamento(f.id, null, null, null)} style={{ ...S.btn, fontSize: 11, color: "#CC0000", padding: "4px 8px" }}>✕</button>
                       )}
                     </div>
                   ))}
@@ -1392,7 +1408,6 @@ export default function EscalaFolga() {
                                       title={modoLimpeza ? "Clique para selecionar todo o setor" : ""}>
                                     {setor} {modoLimpeza && <span style={{ fontSize: 10, color: "#dc2626", fontWeight: "normal" }}><br/>[Selecionar Todos]</span>}
                                   </th>
-                                  <th style={{ ...S.thDia, width: 90, background: "#e5e7eb", color: "#374151" }}>INTERVALO<br/>DOMINGO</th>
                                   {diasLista.map((d) => {
                                     const dow  = config.getDow(d);
                                     const fim  = dow === 0 || dow === 6;
@@ -1414,7 +1429,6 @@ export default function EscalaFolga() {
                                         <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic" }}>
                                           CARGO VAGO — {func.funcao}
                                         </td>
-                                        <td style={{ ...S.tdDia, background: "#ddd" }}></td>
                                         {diasLista.map((d) => <td key={d} style={{ ...S.tdDia, background: "#ddd" }} />)}
                                       </tr>
                                     );
@@ -1459,19 +1473,6 @@ export default function EscalaFolga() {
                                         </div>
                                       </td>
 
-                                      <td style={{ ...S.tdDia, textAlign: "center", background: "#f9fafb" }}>
-                                        <select 
-                                          value={intervalos[func.id] || "N00"}
-                                          onChange={(e) => alterarIntervaloDomingo(func.id, e.target.value)}
-                                          style={{ ...S.inp, padding: "2px", height: 22, fontSize: 10, width: "100%", background: "transparent", border: "none", cursor: "pointer", fontWeight: (intervalos[func.id] && intervalos[func.id] !== "N00") ? "bold" : "normal", color: (intervalos[func.id] && intervalos[func.id] !== "N00") ? "#15803d" : "#555" }}>
-                                          <option value="N00">N00 - Direto</option>
-                                          <option value="N01">N01 - 09h às 10h</option>
-                                          <option value="N02">N02 - 10h às 11h</option>
-                                          <option value="N03">N03 - 11h às 12h</option>
-                                          <option value="N04">N04 - 12h às 13h</option>
-                                        </select>
-                                      </td>
-
                                       {diasLista.map((d) => {
                                         if (fspan && fLabel) {
                                           if (d === fspan.inicio) {
@@ -1485,9 +1486,11 @@ export default function EscalaFolga() {
                                         }
                                         const v    = escala[func.id]?.[d] || "T";
                                         const dow  = config.getDow(d);
+                                        const intv = intervalos[`${func.id}_${d}`];
                                         
                                         const getCellBg = () => {
                                           if (emLimpeza) return "transparent";
+                                          if (v === "ADM" || v === "LM") return "#000";
                                           if (emRevisao) {
                                             if (v === "F") return "#4a4a10";
                                             if (v === "A") return "#a3a360";
@@ -1498,10 +1501,18 @@ export default function EscalaFolga() {
 
                                         return (
                                           <td key={d}
-                                            style={{ ...S.tdDia, background: getCellBg(), cursor: modoLimpeza ? "default" : "pointer" }}
-                                            onClick={() => !modoLimpeza && v !== "V" && alternar(func.id, d)}
+                                            style={{ ...S.tdDia, background: getCellBg(), color: (v === "ADM" || v === "LM") ? "#fff" : "inherit", fontSize: (v === "ADM" || v === "LM") ? 8 : "inherit", fontWeight: (v === "ADM" || v === "LM") ? "bold" : "normal", cursor: modoLimpeza ? "default" : "pointer" }}
+                                            onClick={() => !modoLimpeza && v !== "V" && v !== "ADM" && v !== "LM" && alternar(func.id, d)}
                                             onContextMenu={(e) => { e.preventDefault(); if (!modoLimpeza && (v === "F" || v === "A")) abrirTroca(func, d); }}
-                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : "Trabalho"}>
+                                            title={v === "ADM" ? "Bloqueado antes da Admissão" : v === "LM" ? "Licença Maternidade" : v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
+                                            {v === "ADM" && "ADM"}
+                                            {v === "LM" && "LM"}
+                                            {dow === 0 && v === "T" && (
+                                              <span onClick={(ev) => { ev.stopPropagation(); !modoLimpeza && alternarIntervalo(func.id, d); }}
+                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: modoLimpeza ? "default" : "pointer", display: "block", textAlign: "center" }}>
+                                                {intv || ""}
+                                              </span>
+                                            )}
                                           </td>
                                         );
                                       })}
@@ -1526,30 +1537,50 @@ export default function EscalaFolga() {
 }
 
 // ───────────────────────────────────────────────────────────────────
-// MODAL FÉRIAS
 // ───────────────────────────────────────────────────────────────────
-function FeriasModal({ func, onSalvar, onFechar }) {
+// MODAL AFASTAMENTOS (Férias, LM, ADM)
+// ───────────────────────────────────────────────────────────────────
+function AfastamentoModal({ func, onSalvar, onFechar }) {
+  const [tipo, setTipo]     = useState(func.ferias?.tipo || "F");
   const [inicio, setInicio] = useState(func.ferias?.inicio || "");
-  const [fim,    setFim]    = useState(func.ferias?.fim    || "");
+  const [fim, setFim]       = useState(func.ferias?.fim || "");
+
+  const titulo = tipo === "F" ? "🌴 Férias" : tipo === "LM" ? "👶 Licença Maternidade" : "🏢 Admissão";
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ background: "#fff", borderRadius: 10, padding: "1.5rem", width: 360, boxShadow: "0 8px 32px rgba(0,0,0,.2)" }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>🌴 Férias — {func.nome}</div>
-        <div style={{ fontSize: 12, color: "#555", marginBottom: 14 }}>Período completo (pode incluir dias fora do mês atual).</div>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12 }}>{titulo} — {func.nome}</div>
+        <div style={{ fontSize: 12, color: "#555", marginBottom: 14 }}>
+          {tipo === "ADM" ? "Defina a data de admissão. Dias anteriores serão bloqueados." : "Período completo (pode incluir dias fora do mês atual)."}
+        </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {[["Início", inicio, setInicio], ["Término", fim, setFim]].map(([label, val, set]) => (
-            <div key={label}>
-              <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Data de {label}</label>
-              <input type="date" value={val} onChange={(e) => set(e.target.value)}
+          <div>
+            <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Tipo</label>
+            <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid #999" }}>
+              <option value="F">Férias</option>
+              <option value="LM">Licença Maternidade</option>
+              <option value="ADM">Admissão (Meio do Mês)</option>
+            </select>
+          </div>
+          <div>
+            <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>{tipo === "ADM" ? "Data de Admissão" : "Data de Início"}</label>
+            <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)}
+              style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid #999", boxSizing: "border-box" }} />
+          </div>
+          {tipo !== "ADM" && (
+            <div>
+              <label style={{ fontSize: 12, color: "#555", display: "block", marginBottom: 4 }}>Data de Término</label>
+              <input type="date" value={fim} onChange={(e) => setFim(e.target.value)}
                 style={{ width: "100%", fontSize: 12, padding: "6px 8px", borderRadius: 6, border: "1px solid #999", boxSizing: "border-box" }} />
             </div>
-          ))}
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
           <button onClick={onFechar} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "1px solid #999", background: "#f9fafb", cursor: "pointer" }}>Cancelar</button>
-          <button disabled={!inicio || !fim || inicio > fim}
-            onClick={() => onSalvar(func.id, inicio, fim)}
-            style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "none", background: "#166534", color: "#fff", cursor: "pointer", opacity: (!inicio || !fim || inicio > fim) ? 0.5 : 1 }}>
+          <button disabled={!inicio || (tipo !== "ADM" && (!fim || inicio > fim))}
+            onClick={() => onSalvar(func.id, tipo, inicio, fim)}
+            style={{ fontSize: 12, padding: "6px 14px", borderRadius: 6, border: "none", background: "#166534", color: "#fff", cursor: "pointer", opacity: (!inicio || (tipo !== "ADM" && (!fim || inicio > fim))) ? 0.5 : 1 }}>
             💾 Salvar
           </button>
         </div>
