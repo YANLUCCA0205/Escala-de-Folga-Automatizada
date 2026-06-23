@@ -407,7 +407,6 @@ export default function EscalaFolga() {
   const [salvando,       setSalvando]       = useState(false);
   const [salvouOk,       setSalvouOk]       = useState(false);
   const [carregandoDB,   setCarregandoDB]   = useState(false);
-  const [revisarMap,     setRevisarMap]     = useState({});
   const salvarTimer = useRef(null);
   const funcsRef    = useRef([]);
   const escalaRef   = useRef({});
@@ -809,7 +808,14 @@ export default function EscalaFolga() {
 
   // ── revisão ───────────────────────────────────────────────────
   const toggleRevisar = (funcId) => {
-    setRevisarMap(prev => ({ ...prev, [funcId]: !prev[funcId] }));
+    setEscala((prev) => {
+      const funcEscala = { ...prev[funcId] };
+      funcEscala.R = !funcEscala.R;
+      const nova = { ...prev, [funcId]: funcEscala };
+      escalaRef.current = nova;
+      salvarSupabase(nova, intervRef.current, cfgRef.current, funcsRef.current);
+      return nova;
+    });
   };
 
   // ── alertas ───────────────────────────────────────────────────
@@ -1338,7 +1344,7 @@ export default function EscalaFolga() {
                                   const fspan  = getFeriasSpan(func);
                                   const fLabel = getFeriasLabel(func);
                                   const turnoColor = func.turno === "MANHÃ" ? "#1e40af" : "#92400e";
-                                  const emRevisao = revisarMap[func.id];
+                                  const emRevisao = escala[func.id]?.R;
 
                                   return (
                                     <tr key={func.id} style={{ background: emRevisao ? "#fef08a" : "transparent", transition: "background 0.2s" }}>
