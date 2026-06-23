@@ -1509,8 +1509,9 @@ export default function EscalaFolga() {
                                             {v === "LM" && "LM"}
                                             {dow === 0 && v === "T" && (
                                               <span onClick={(ev) => { ev.stopPropagation(); !modoLimpeza && alternarIntervalo(func.id, d); }}
-                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: modoLimpeza ? "default" : "pointer", display: "block", textAlign: "center" }}>
-                                                {intv || ""}
+                                                title="Clique para alternar o intervalo de domingo"
+                                                style={{ fontSize: 9, fontWeight: 700, color: intv ? "#15803d" : "#ccc", cursor: modoLimpeza ? "default" : "pointer", display: "inline-block", textAlign: "center", minWidth: 16, minHeight: 14, lineHeight: "14px", background: intv ? "#dcfce7" : "transparent", borderRadius: 3, marginTop: 2 }}>
+                                                {intv || "·"}
                                               </span>
                                             )}
                                           </td>
