@@ -211,7 +211,7 @@ class AlertaEngine {
       for (let d = 1; d <= config.dias; d++) {
         const dow = config.getDow(d);
         const trabalhando = lista.filter(
-          (f) => !f.ferias && !f.cargoVago && (escala[f.id]?.[d] || "T") === "T"
+          (f) => !f.ferias && !f.cargoVago && !"FAV".includes(escala[f.id]?.[d] || "T")
         ).length;
         if (trabalhando < minimo && !(dow === 0 && minimo <= 0)) {
           alertas.push({
@@ -220,12 +220,12 @@ class AlertaEngine {
           });
         }
         if (config.isDiaCritico(unidade, d)) {
-          const folgando = lista.filter((f) => (escala[f.id]?.[d] || "T") === "F").length;
+          const folgando = lista.filter((f) => "FA".includes(escala[f.id]?.[d] || "T")).length;
           if (folgando > 0 && trabalhando <= minimo) {
             alertas.push({
               tipo: "critico", nivel: "aviso", dia: d, unidade, setor,
               msg: `Dia crítico ${d}: ${folgando} de folga em ${setor}/${unidade} com cobertura no limite`,
-              funcIds: lista.filter((f) => escala[f.id]?.[d] === "F").map((f) => f.id),
+              funcIds: lista.filter((f) => "FA".includes(escala[f.id]?.[d])).map((f) => f.id),
             });
           }
         }
@@ -604,7 +604,7 @@ export default function EscalaFolga() {
 
   // ── alternar célula ───────────────────────────────────────────
   const alternar = (id, dia) => {
-    const seq = { T: "F", F: "T", V: "V" };
+    const seq = { T: "F", F: "A", A: "T", V: "V" };
     setEscala((prev) => {
       const nova = { ...prev, [id]: { ...prev[id], [dia]: seq[prev[id]?.[dia] || "T"] } };
       escalaRef.current = nova;
@@ -780,6 +780,7 @@ export default function EscalaFolga() {
         turnoT:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("92400e") },
         // FIX XLSX: folga = preto sólido COM conteúdo vazio explícito
         folga:    { font: { name: "Arial", sz: 8, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
+        folgaAd:  { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "888888" } }, border: borda("888888") },
         trab:     { font: { name: "Arial", sz: 8 }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, border: borda() },
         ferias:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("166534") },
         intNum:   { font: { name: "Arial", sz: 8, bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
@@ -832,7 +833,7 @@ export default function EscalaFolga() {
               // dias antes das férias
               for (let d = 1; d < fspan.inicio; d++) {
                 const v = escalaSnap[func.id]?.[d] || "T";
-                set(row, d, C("", v === "F" ? EST.folga : EST.trab));
+                set(row, d, C("", v === "F" ? EST.folga : v === "A" ? EST.folgaAd : EST.trab));
               }
               // bloco de férias (mesclado)
               set(row, fspan.inicio, C(getFeriasLabel(func) || "FÉRIAS", EST.ferias));
@@ -841,15 +842,15 @@ export default function EscalaFolga() {
               // dias após as férias
               for (let d = fspan.fim + 1; d <= diasNum; d++) {
                 const v = escalaSnap[func.id]?.[d] || "T";
-                set(row, d, C("", v === "F" ? EST.folga : EST.trab));
+                set(row, d, C("", v === "F" ? EST.folga : v === "A" ? EST.folgaAd : EST.trab));
               }
             } else {
               for (let d = 1; d <= diasNum; d++) {
                 const v    = escalaSnap[func.id]?.[d] || "T";
                 const dow  = config.getDow(d);
                 const intv = intervSnap[`${func.id}_${d}`];
-                if (v === "F") {
-                  set(row, d, C("", EST.folga));
+                if (v === "F" || v === "A") {
+                  set(row, d, C("", v === "F" ? EST.folga : EST.folgaAd));
                 } else if (dow === 0 && intv) {
                   set(row, d, C(intv, EST.intNum));
                 } else {
@@ -1120,7 +1121,7 @@ export default function EscalaFolga() {
                 <option value="TARDE">Tarde</option>
               </select>
               <div style={{ marginLeft: "auto", display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                {[["#000","Folga"],["#fff","Trabalho"],["#166534","Férias"]].map(([bg, lb]) => (
+                {[["#000","Folga"],["#888","Folga Adicional"],["#fff","Trabalho"],["#166534","Férias"]].map(([bg, lb]) => (
                   <div key={lb} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: "#555" }}>
                     <div style={{ width: 12, height: 12, borderRadius: 2, background: bg, border: "1px solid #999" }} />{lb}
                   </div>
@@ -1224,10 +1225,10 @@ export default function EscalaFolga() {
                                         const intv = intervalos[`${func.id}_${d}`];
                                         return (
                                           <td key={d}
-                                            style={{ ...S.tdDia, background: v === "F" ? "#000" : "#fff", cursor: "pointer" }}
+                                            style={{ ...S.tdDia, background: v === "F" ? "#000" : v === "A" ? "#888" : "#fff", cursor: "pointer" }}
                                             onClick={() => v !== "V" && alternar(func.id, d)}
-                                            onContextMenu={(e) => { e.preventDefault(); if (v === "F") abrirTroca(func, d); }}
-                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
+                                            onContextMenu={(e) => { e.preventDefault(); if (v === "F" || v === "A") abrirTroca(func, d); }}
+                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
                                             {dow === 0 && v === "T" && (
                                               <span onClick={(ev) => { ev.stopPropagation(); alternarIntervalo(func.id, d); }}
                                                 style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: "pointer", display: "block", textAlign: "center" }}>
