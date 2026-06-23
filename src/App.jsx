@@ -4,7 +4,6 @@
 //  npm install xlsx @supabase/supabase-js
 // ═══════════════════════════════════════════════════════════════════
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import * as XLSX from "xlsx";
 import { createClient } from "@supabase/supabase-js";
 
 // ───────────────────────────────────────────────────────────────────
@@ -967,130 +966,7 @@ export default function EscalaFolga() {
     );
   };
 
-  // ═══════════════════════════════════════════════════════════════
-  // EXPORTAR XLSX — FIX: garante que todos os dias sejam gravados
-  // ═══════════════════════════════════════════════════════════════
-  const exportarXLSX = () => {
-    if (!funcionarios.length) return;
-    try {
-      const wb = XLSX.utils.book_new();
 
-      const borda = (cor = "999999") => ({
-        top:    { style: "thin", color: { rgb: cor } },
-        bottom: { style: "thin", color: { rgb: cor } },
-        left:   { style: "thin", color: { rgb: cor } },
-        right:  { style: "thin", color: { rgb: cor } },
-      });
-
-      const C = (v, s) => ({ v: v ?? "", t: "s", s });
-
-      const EST = {
-        titulo:   { font: { name: "Arial", sz: 12, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
-        setorH:   { font: { name: "Arial", sz: 9,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "111111" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("000000") },
-        diaH:     { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "CCCCCC" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
-        diaHFim:  { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "666666" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda("666666") },
-        diaHCrit: { font: { name: "Arial", sz: 8,  bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FEF3C7" } }, alignment: { horizontal: "center", vertical: "center", wrapText: true }, border: borda() },
-        nome:     { font: { name: "Arial", sz: 8  }, fill: { patternType: "none" }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-        vago:     { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "DDDDDD" } }, alignment: { horizontal: "left", vertical: "center" }, border: borda() },
-        turnoM:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "1e40af" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("1e40af") },
-        turnoT:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "92400e" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("92400e") },
-        // FIX XLSX: folga = preto sólido COM conteúdo vazio explícito
-        folga:    { font: { name: "Arial", sz: 8, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "000000" } }, border: borda("000000") },
-        folgaAd:  { font: { name: "Arial", sz: 8, color: { rgb: "888888" } }, fill: { patternType: "solid", fgColor: { rgb: "888888" } }, border: borda("888888") },
-        trab:     { font: { name: "Arial", sz: 8 }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, border: borda() },
-        ferias:   { font: { name: "Arial", sz: 7, bold: true, color: { rgb: "FFFFFF" } }, fill: { patternType: "solid", fgColor: { rgb: "166534" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda("166534") },
-        intNum:   { font: { name: "Arial", sz: 8, bold: true, color: { rgb: "000000" } }, fill: { patternType: "solid", fgColor: { rgb: "FFFFFF" } }, alignment: { horizontal: "center", vertical: "center" }, border: borda() },
-      };
-
-      // Snapshot da escala atual no momento da exportação
-      const escalaSnap = escalaRef.current;
-      const intervSnap = intervRef.current;
-
-      lojas.forEach((loja) => {
-        const ws = {}, merges = [];
-        let row = 0;
-        const totalCols = 1 + diasNum; // col0=nome+turno mesclados, col1..N=dias
-        const set = (r, c, v) => { ws[XLSX.utils.encode_cell({ r, c })] = v; };
-        const criticos = [
-          ...config.getDiasCriticos(loja),
-          ...config.getDiasPagamento(loja),
-          ...config.getFeriados(loja),
-        ];
-
-        // Título da loja
-        set(row, 0, C(`${tituloMes} - ${loja}`, EST.titulo));
-        merges.push({ s: { r: row, c: 0 }, e: { r: row, c: totalCols } });
-        row++;
-
-        setoresDaLoja(loja).forEach((setor) => {
-          // Cabeçalho setor — col0 = "SETOR | T", col1..N = dias
-          set(row, 0, C(`${setor}  |  T`, EST.setorH));
-          for (let d = 1; d <= diasNum; d++) {
-            const dow  = config.getDow(d);
-            const fim  = dow === 0 || dow === 6;
-            const crit = criticos.includes(d);
-            set(row, d, C(`${DIAS7[dow]}\n${d}`, crit ? EST.diaHCrit : fim ? EST.diaHFim : EST.diaH));
-          }
-          row++;
-
-          funcsDaLoja(loja, setor, "").forEach((func) => {
-            // col0 = "NOME | TURNO"
-            const turnoLetra = func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0);
-            const estiloNome = func.cargoVago ? EST.vago : EST.nome;
-            set(row, 0, C(func.cargoVago ? "CARGO VAGO" : `${func.nome}  |  ${turnoLetra}`, estiloNome));
-
-            if (func.cargoVago) {
-              for (let d = 1; d <= diasNum; d++) set(row, d, C("", EST.trab));
-              row++; return;
-            }
-
-            const fspan = getFeriasSpan(func);
-            if (fspan && func.ferias) {
-              // dias antes das férias
-              for (let d = 1; d < fspan.inicio; d++) {
-                const v = escalaSnap[func.id]?.[d] || "T";
-                set(row, d, C("", v === "F" ? EST.folga : v === "A" ? EST.folgaAd : EST.trab));
-              }
-              // bloco de férias (mesclado)
-              set(row, fspan.inicio, C(getFeriasLabel(func) || "FÉRIAS", EST.ferias));
-              if (fspan.span > 1)
-                merges.push({ s: { r: row, c: fspan.inicio }, e: { r: row, c: fspan.fim } });
-              // dias após as férias
-              for (let d = fspan.fim + 1; d <= diasNum; d++) {
-                const v = escalaSnap[func.id]?.[d] || "T";
-                set(row, d, C("", v === "F" ? EST.folga : v === "A" ? EST.folgaAd : EST.trab));
-              }
-            } else {
-              for (let d = 1; d <= diasNum; d++) {
-                const v    = escalaSnap[func.id]?.[d] || "T";
-                const dow  = config.getDow(d);
-                const intv = intervSnap[`${func.id}_${d}`];
-                if (v === "F" || v === "A") {
-                  set(row, d, C("", v === "F" ? EST.folga : EST.folgaAd));
-                } else if (dow === 0 && intv) {
-                  set(row, d, C(intv, EST.intNum));
-                } else {
-                  set(row, d, C("", EST.trab));
-                }
-              }
-            }
-            row++;
-          });
-        });
-
-        // Largura das colunas: col0 mais larga (nome + turno), resto estreito
-        ws["!cols"]   = [{ wch: 26 }, ...Array(diasNum).fill({ wch: 3.5 })];
-        ws["!merges"] = merges;
-        ws["!ref"]    = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: totalCols } });
-        XLSX.utils.book_append_sheet(wb, ws, loja.replace(/[:\\\/\?\*\[\]]/g, "").substring(0, 31));
-      });
-
-      XLSX.writeFile(wb, `escala_${tituloMes.toLowerCase().replace(/ /g, "_")}.xlsx`);
-    } catch (err) {
-      alert("Erro ao exportar: " + err.message);
-      console.error(err);
-    }
-  };
 
   // ═══════════════════════════════════════════════════════════════
   // GUARDS
@@ -1108,13 +984,28 @@ export default function EscalaFolga() {
   // RENDER PRINCIPAL
   // ═══════════════════════════════════════════════════════════════
   return (
-    <div style={S.page}>
-      {/* ── MODAIS ── */}
-      {feriasModal && <AfastamentoModal func={feriasModal} onSalvar={salvarAfastamento} onFechar={() => setFeriasModal(null)} />}
+    <>
+      <style>{`
+        @media print {
+          @page { size: landscape; margin: 10mm; }
+          body { background: #fff !important; margin: 0; padding: 0; }
+          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          .no-print { display: none !important; }
+          .print-hide { display: none !important; }
+          .print-container { padding: 0 !important; margin: 0 !important; max-width: none !important; box-shadow: none !important; border: none !important; }
+          table { width: 100% !important; page-break-inside: avoid; border-collapse: collapse; }
+          tr { page-break-inside: avoid; page-break-after: auto; }
+          thead { display: table-header-group; }
+          tfoot { display: table-footer-group; }
+        }
+      `}</style>
+      <div style={S.page} className="print-container">
+        {/* ── MODAIS ── */}
+        {feriasModal && <AfastamentoModal func={feriasModal} onSalvar={salvarAfastamento} onFechar={() => setFeriasModal(null)} />}
 
-      <div style={S.wrap}>
+        <div style={S.wrap} className="print-container">
         {/* Header */}
-        <div style={S.header}>
+        <div style={S.header} className="no-print">
           <div>
             <div style={S.hTitle}>⬛ Escala de Folgas</div>
             <div style={S.hSub}>
@@ -1172,13 +1063,13 @@ export default function EscalaFolga() {
             <button onClick={() => setModoLimpeza(!modoLimpeza)} style={{ ...S.btn, backgroundColor: modoLimpeza ? "#fee2e2" : "transparent" }}>🧹 Limpeza em Lote</button>
             <button onClick={() => gerarEscala(funcsRef.current, config)} style={S.btn}>🔄 Regerar</button>
             <button onClick={salvarEstadoFolgas} style={{ ...S.btn, backgroundColor: "#28a745", color: "#fff", borderColor: "#28a745" }}>💾 Salvar estado atual das folgas</button>
-            <button onClick={exportarXLSX} style={{ ...S.btn, ...S.btnR }}>📥 Exportar XLSX</button>
+            <button onClick={() => window.print()} style={{ ...S.btn, ...S.btnR, background: "#111", color: "#fff", borderColor: "#111" }}>🖨️ Imprimir / Salvar PDF</button>
             <button onClick={() => sb.auth.signOut()} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000" }}>Sair</button>
           </div>
         </div>
 
         {/* Abas */}
-        <div style={S.tabs}>
+        <div style={S.tabs} className="no-print">
           {[
             { id: "escala",  label: "📅 Escala" },
             { id: "config",  label: "⚙️ Configuração" },
@@ -1191,7 +1082,7 @@ export default function EscalaFolga() {
 
         {/* ════ CONFIG ════ */}
         {aba === "config" && (
-          <div style={{ paddingTop: 12 }}>
+          <div className="no-print" style={{ paddingTop: 12 }}>
             <p style={S.hint}>Configurações salvas automaticamente. Dias separados por vírgula (ex: 5, 20).</p>
             {(funcionarios.length ? lojas : ["LOJA 1","LOJA 2","LOJA 3"]).map((unidade) => {
               const cfg = cfgUnidades[unidade] || cfgVazia();
@@ -1263,7 +1154,7 @@ export default function EscalaFolga() {
 
         {/* ════ ALERTAS ════ */}
         {aba === "alertas" && (
-          <div style={{ paddingTop: 12 }}>
+          <div style={{ paddingTop: 12 }} className="no-print">
             {/* Legenda de tipos */}
             <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
               {[["❌ ERRO","cobertura mínima não atingida","#CC0000"],["⚠️ AVISO","dia crítico com cobertura no limite","#b45309"],["⏱ SOBRECARGA","funcionário com mais de 7 dias seguidos","#7c3aed"]].map(([icon, desc, cor]) => (
@@ -1457,18 +1348,18 @@ export default function EscalaFolga() {
                                           {modoLimpeza && (
                                             <input type="checkbox" checked={emLimpeza} readOnly style={{ margin: 0, cursor: "pointer" }} />
                                           )}
-                                          {!modoLimpeza && emRevisao && <span style={{ fontSize: 10 }} title="Marcado para revisão">⚠️</span>}
-                                          <span style={{ display: "inline-block", background: turnoColor, color: "#fff", fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "1px 3px", flexShrink: 0 }}>
+                                          {!modoLimpeza && emRevisao && <span className="no-print" style={{ fontSize: 10 }} title="Marcado para revisão">⚠️</span>}
+                                          <span className="print-hide" style={{ display: "inline-block", background: turnoColor, color: "#fff", fontSize: 7, fontWeight: 700, borderRadius: 2, padding: "1px 3px", flexShrink: 0 }}>
                                             {func.turno === "MANHÃ" ? "M" : func.turno === "TARDE" ? "T" : (func.turno || "").charAt(0)}
                                           </span>
                                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{func.nome}</span>
-                                          {badgeRegime(func)}
+                                          <span className="print-hide">{badgeRegime(func)}</span>
                                           {func.ferias && (
-                                            <span onClick={() => setFeriasModal(func)} title="Editar férias"
+                                            <span className="no-print" onClick={() => setFeriasModal(func)} title="Editar férias"
                                               style={{ cursor: "pointer", fontSize: 9, color: "#166534", flexShrink: 0 }}>🌴</span>
                                           )}
                                         </div>
-                                        <div style={{ fontSize: 8, color: "#888", marginTop: 1, paddingLeft: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        <div className="print-hide" style={{ fontSize: 8, color: "#888", marginTop: 1, paddingLeft: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                           {func.funcao}
                                         </div>
                                       </td>
@@ -1534,6 +1425,7 @@ export default function EscalaFolga() {
         )}
       </div>
     </div>
+    </>
   );
 }
 
