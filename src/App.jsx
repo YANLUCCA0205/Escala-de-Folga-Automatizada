@@ -653,6 +653,132 @@ export default function EscalaFolga() {
     });
     setFeriasModal(null);
   };
+  // ── salvar estado das folgas ─────────────────────────────────
+  const salvarEstadoFolgas = async () => {
+    const estado = {
+      mes: mesKey,
+      dataInicio,
+      dias: diasNum,
+      dataSalvo: new Date().toISOString(),
+      funcionarios: []
+    };
+
+    const grupos = {};
+    funcionarios.forEach((f) => {
+      const k = `${f.unidade}||${f.setor}`;
+      (grupos[k] = grupos[k] || []).push(f);
+    });
+
+    funcionarios.forEach((func) => {
+      if (func.cargoVago) return;
+
+      const k = `${func.unidade}||${func.setor}`;
+      const grupo = grupos[k] || [];
+      const idx = grupo.indexOf(func);
+
+      const fEscala = escala[func.id] || {};
+      const folgas = [];
+      const datasFolga = [];
+
+      for (let d = 1; d <= diasNum; d++) {
+        const status = fEscala[d];
+        if (status === "F" || status === "A") {
+          folgas.push(d);
+          const dtStr = config.getDataDia(d).toISOString().slice(0, 10);
+          datasFolga.push(dtStr);
+        }
+      }
+
+      // Calcular dias trabalhados após a última folga no mês
+      let diasTrabalhadosAposUltimaFolga = 0;
+      if (folgas.length > 0) {
+        const ultimaFolga = folgas[folgas.length - 1];
+        diasTrabalhadosAposUltimaFolga = diasNum - ultimaFolga;
+      } else {
+        diasTrabalhadosAposUltimaFolga = diasNum;
+      }
+
+      // Posição atual do ciclo e última semana
+      let posicaoCiclo = 0;
+      let ultimaSemanaUtilizada = 0;
+
+      if (func.regimeFolga.tipo === "5x1") {
+        const offset = (idx * 1) % 6;
+        posicaoCiclo = (diasNum - 1 + offset) % 6;
+      } else if (func.regimeFolga.tipo === "6x1_flex") {
+        const dowsPermitidos = func.regimeFolga.diasFlex
+          .map((d) => DIAS_DOW[d])
+          .filter((n) => n !== undefined);
+        
+        if (dowsPermitidos.length > 0) {
+          let semana = 0;
+          for (let d = 1; d <= diasNum; d++) {
+            const dow = config.getDow(d);
+            if (dowsPermitidos.includes(dow)) {
+              if (dow === dowsPermitidos[dowsPermitidos.length - 1]) {
+                semana++;
+              }
+            }
+          }
+          posicaoCiclo = (semana + idx) % dowsPermitidos.length;
+          ultimaSemanaUtilizada = semana;
+        }
+      }
+
+      estado.funcionarios.push({
+        id: func.id,
+        nome: func.nome,
+        unidade: func.unidade,
+        setor: func.setor,
+        funcao: func.funcao,
+        regime: func.regimeFolga.tipo,
+        folgas,
+        datasFolga,
+        ultimoDiaFolga: folgas.length > 0 ? folgas[folgas.length - 1] : null,
+        diasTrabalhadosAposUltimaFolga,
+        posicaoCiclo,
+        ultimaSemanaUtilizada
+      });
+    });
+
+    // 1. Atualizar no estado local das configurações por unidade para persistir no Supabase
+    const novasCfgs = { ...cfgUnidades };
+    const porUnidade = {};
+    estado.funcionarios.forEach((func) => {
+      if (!porUnidade[func.unidade]) porUnidade[func.unidade] = [];
+      porUnidade[func.unidade].push(func);
+    });
+
+    Object.keys(porUnidade).forEach((unidade) => {
+      novasCfgs[unidade] = {
+        ...novasCfgs[unidade],
+        estadoFolgas: {
+          mes: estado.mes,
+          dataInicio: estado.dataInicio,
+          dias: estado.dias,
+          dataSalvo: estado.dataSalvo,
+          funcionarios: porUnidade[unidade]
+        }
+      };
+    });
+
+    setCfgUnidades(novasCfgs);
+    cfgRef.current = novasCfgs;
+
+    // Dispara a persistência imediata no Supabase
+    await salvarSupabase(escala, intervalos, novasCfgs, funcionarios);
+
+    // 2. Disponibiliza para download como JSON
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(estado, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `estado-folgas-${estado.mes}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+
+    alert("Estado atual das folgas salvo e baixado com sucesso!");
+  };
 
   // ── salvar config ─────────────────────────────────────────────
   const setCfgCampo = (unidade, campo, valor) => {
@@ -943,6 +1069,7 @@ export default function EscalaFolga() {
                 }
               }} style={{ ...S.inp, width: 58 }} />
             <button onClick={() => gerarEscala(funcsRef.current, config)} style={S.btn}>🔄 Regerar</button>
+            <button onClick={salvarEstadoFolgas} style={{ ...S.btn, backgroundColor: "#28a745", color: "#fff", borderColor: "#28a745" }}>💾 Salvar estado atual das folgas</button>
             <button onClick={exportarXLSX} style={{ ...S.btn, ...S.btnR }}>📥 Exportar XLSX</button>
             <button onClick={() => sb.auth.signOut()} style={{ ...S.btn, color: "#CC0000", borderColor: "#CC0000" }}>Sair</button>
           </div>
