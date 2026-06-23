@@ -645,14 +645,15 @@ export default function EscalaFolga() {
   };
 
   // ── intervalo domingo ─────────────────────────────────────────
-  const alternarIntervalo = (id, dia) => {
-    const key = `${id}_${dia}`;
+  const alterarIntervaloDomingo = (id, valor) => {
     setIntervalos((prev) => {
       let novo;
-      const cur = prev[key];
-      if (!cur) novo = { ...prev, [key]: "1" };
-      else if (cur === "4") { novo = { ...prev }; delete novo[key]; }
-      else novo = { ...prev, [key]: String(Number(cur) + 1) };
+      if (valor === "N00") {
+        novo = { ...prev };
+        delete novo[id];
+      } else {
+        novo = { ...prev, [id]: valor };
+      }
       intervRef.current = novo;
       salvarSupabase(escalaRef.current, novo, cfgRef.current, funcsRef.current);
       return novo;
@@ -1391,6 +1392,7 @@ export default function EscalaFolga() {
                                       title={modoLimpeza ? "Clique para selecionar todo o setor" : ""}>
                                     {setor} {modoLimpeza && <span style={{ fontSize: 10, color: "#dc2626", fontWeight: "normal" }}><br/>[Selecionar Todos]</span>}
                                   </th>
+                                  <th style={{ ...S.thDia, width: 90, background: "#e5e7eb", color: "#374151" }}>INTERVALO<br/>DOMINGO</th>
                                   {diasLista.map((d) => {
                                     const dow  = config.getDow(d);
                                     const fim  = dow === 0 || dow === 6;
@@ -1412,6 +1414,7 @@ export default function EscalaFolga() {
                                         <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic" }}>
                                           CARGO VAGO — {func.funcao}
                                         </td>
+                                        <td style={{ ...S.tdDia, background: "#ddd" }}></td>
                                         {diasLista.map((d) => <td key={d} style={{ ...S.tdDia, background: "#ddd" }} />)}
                                       </tr>
                                     );
@@ -1456,6 +1459,19 @@ export default function EscalaFolga() {
                                         </div>
                                       </td>
 
+                                      <td style={{ ...S.tdDia, textAlign: "center", background: "#f9fafb" }}>
+                                        <select 
+                                          value={intervalos[func.id] || "N00"}
+                                          onChange={(e) => alterarIntervaloDomingo(func.id, e.target.value)}
+                                          style={{ ...S.inp, padding: "2px", height: 22, fontSize: 10, width: "100%", background: "transparent", border: "none", cursor: "pointer", fontWeight: (intervalos[func.id] && intervalos[func.id] !== "N00") ? "bold" : "normal", color: (intervalos[func.id] && intervalos[func.id] !== "N00") ? "#15803d" : "#555" }}>
+                                          <option value="N00">N00 - Direto</option>
+                                          <option value="N01">N01 - 09h às 10h</option>
+                                          <option value="N02">N02 - 10h às 11h</option>
+                                          <option value="N03">N03 - 11h às 12h</option>
+                                          <option value="N04">N04 - 12h às 13h</option>
+                                        </select>
+                                      </td>
+
                                       {diasLista.map((d) => {
                                         if (fspan && fLabel) {
                                           if (d === fspan.inicio) {
@@ -1469,7 +1485,6 @@ export default function EscalaFolga() {
                                         }
                                         const v    = escala[func.id]?.[d] || "T";
                                         const dow  = config.getDow(d);
-                                        const intv = intervalos[`${func.id}_${d}`];
                                         
                                         const getCellBg = () => {
                                           if (emLimpeza) return "transparent";
@@ -1486,13 +1501,7 @@ export default function EscalaFolga() {
                                             style={{ ...S.tdDia, background: getCellBg(), cursor: modoLimpeza ? "default" : "pointer" }}
                                             onClick={() => !modoLimpeza && v !== "V" && alternar(func.id, d)}
                                             onContextMenu={(e) => { e.preventDefault(); if (!modoLimpeza && (v === "F" || v === "A")) abrirTroca(func, d); }}
-                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : dow === 0 ? "Dom — clique p/ intervalo" : "Trabalho"}>
-                                            {dow === 0 && v === "T" && (
-                                              <span onClick={(ev) => { ev.stopPropagation(); !modoLimpeza && alternarIntervalo(func.id, d); }}
-                                                style={{ fontSize: 9, fontWeight: 700, color: "#555", cursor: modoLimpeza ? "default" : "pointer", display: "block", textAlign: "center" }}>
-                                                {intv || ""}
-                                              </span>
-                                            )}
+                                            title={v === "F" ? "Folga — clique dir. p/ trocar" : v === "A" ? "Folga Adicional — clique dir. p/ trocar" : "Trabalho"}>
                                           </td>
                                         );
                                       })}
