@@ -397,6 +397,7 @@ export default function EscalaFolga() {
   const [dataInicio,     setDataInicio]     = useState("2026-05-01");
   const [aba,            setAba]            = useState("escala");
   const [trocaAlvo,      setTrocaAlvo]      = useState(null);
+  const [trocaHierarquiaAlvo, setTrocaHierarquiaAlvo] = useState(null);
   const [trocaSugestoes, setTrocaSugestoes] = useState([]);
   const [filtroLoja,     setFiltroLoja]     = useState("");
   const [filtroSetor,    setFiltroSetor]    = useState("");
@@ -905,6 +906,42 @@ export default function EscalaFolga() {
     setAba("escala"); setTrocaAlvo(null);
   };
 
+  // ── troca de hierarquia ───────────────────────────────────────
+  const abrirTrocaHierarquia = (func) => {
+    setTrocaHierarquiaAlvo(func);
+    setAba("trocaHierarquia");
+  };
+
+  const executarTrocaHierarquia = (candidato) => {
+    const alvo = trocaHierarquiaAlvo;
+    
+    const pA = { setor: alvo.setor, funcao: alvo.funcao, turno: alvo.turno, regimeFolga: alvo.regimeFolga, ordem: alvo.ordem };
+    const pB = { setor: candidato.setor, funcao: candidato.funcao, turno: candidato.turno, regimeFolga: candidato.regimeFolga, ordem: candidato.ordem };
+    
+    const novaLista = funcionarios.map(f => {
+      if (f.id === alvo.id) {
+        return Object.assign(Object.create(FuncionarioModel.prototype), { ...f, ...pB });
+      }
+      if (f.id === candidato.id) {
+        return Object.assign(Object.create(FuncionarioModel.prototype), { ...f, ...pA });
+      }
+      return f;
+    });
+
+    setFuncionarios(novaLista);
+    funcsRef.current = novaLista;
+    try { localStorage.setItem("funcionarios_salvos", JSON.stringify(novaLista)); } catch (e) { console.error(e); }
+    
+    const cfg = new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: garantirCfg(cfgRef.current, novaLista.map((f) => f.unidade)) });
+    const novaEscala = calcularEscala(novaLista, cfg);
+    setEscala(novaEscala);
+    escalaRef.current = novaEscala;
+    salvarSupabase(novaEscala, intervRef.current, cfgRef.current, novaLista);
+    
+    setAba("escala");
+    setTrocaHierarquiaAlvo(null);
+  };
+
   // ── helpers ───────────────────────────────────────────────────
   const lojas     = useMemo(() => [...new Set(funcionarios.map((f) => f.unidade))].sort(), [funcionarios]);
   const diasLista = useMemo(() => Array.from({ length: diasNum }, (_, i) => i + 1), [diasNum]);
@@ -1227,6 +1264,37 @@ export default function EscalaFolga() {
           </div>
         )}
 
+        {/* ════ TROCA DE HIERARQUIA ════ */}
+        {aba === "trocaHierarquia" && trocaHierarquiaAlvo && (
+          <div className="no-print">
+            <button onClick={() => { setAba("escala"); setTrocaHierarquiaAlvo(null); }} style={{ ...S.btn, marginBottom: 16 }}>← Voltar para a Escala</button>
+            <div style={S.card}>
+              <div style={S.cardTit}>🔄 Troca de Hierarquia</div>
+              <p style={{ fontSize: 13, marginBottom: 16, color: "#444", lineHeight: 1.5 }}>
+                Com quem <strong>{trocaHierarquiaAlvo.nome}</strong> ({trocaHierarquiaAlvo.funcao} - {trocaHierarquiaAlvo.setor}) irá trocar de posição?<br/>
+                <span style={{ fontSize: 11, color: "#888" }}>O nome e as férias se mantêm com cada pessoa, apenas o cargo, setor, e a ordem da escala base são invertidos.</span>
+              </p>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
+                {funcionarios
+                  .filter((f) => f.id !== trocaHierarquiaAlvo.id && f.unidade === trocaHierarquiaAlvo.unidade)
+                  .map((cand) => (
+                    <div key={cand.id} style={{ border: "1px solid #ddd", borderRadius: 6, padding: "10px 12px", background: "#fff", display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ fontWeight: "bold", fontSize: 12, color: "#111" }}>{cand.nome}</div>
+                      <div style={{ fontSize: 11, color: "#666" }}>
+                        {cand.funcao} ({cand.setor})<br/>
+                        Turno: {cand.turno}
+                      </div>
+                      <button onClick={() => executarTrocaHierarquia(cand)} style={{ ...S.btn, background: "#111", color: "#fff", border: "none", marginTop: 4 }}>
+                        Trocar com {cand.nome.split(" ")[0]}
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ════ ESCALA ════ */}
         {aba === "escala" && (
           <>
@@ -1342,8 +1410,12 @@ export default function EscalaFolga() {
                                             } else {
                                               toggleRevisar(func.id);
                                             }
-                                          }} 
-                                          title={modoLimpeza ? "Selecionar para limpeza" : "Clique para marcar/desmarcar para revisão"}>
+                                          }}
+                                          onContextMenu={(e) => {
+                                            e.preventDefault();
+                                            if (!modoLimpeza) abrirTrocaHierarquia(func);
+                                          }}
+                                          title={modoLimpeza ? "Selecionar para limpeza" : "Clique esquerdo: marcar para revisão. Clique direito: trocar hierarquia"}>
                                         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                           {modoLimpeza && (
                                             <input type="checkbox" checked={emLimpeza} readOnly style={{ margin: 0, cursor: "pointer" }} />
