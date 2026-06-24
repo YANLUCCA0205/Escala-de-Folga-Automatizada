@@ -933,10 +933,45 @@ export default function EscalaFolga() {
     try { localStorage.setItem("funcionarios_salvos", JSON.stringify(novaLista)); } catch (e) { console.error(e); }
     
     const cfg = new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: garantirCfg(cfgRef.current, novaLista.map((f) => f.unidade)) });
-    const novaEscala = calcularEscala(novaLista, cfg);
+    const allBaseScales = calcularEscala(novaLista, cfg);
+    
+    const novaEscala = { ...escala };
+    const novosIntervalos = { ...intervRef.current };
+
+    for (let d = 1; d <= diasNum; d++) {
+      delete novosIntervalos[`${alvo.id}_${d}`];
+      delete novosIntervalos[`${candidato.id}_${d}`];
+    }
+
+    // Alvo recebe a escala que era do Candidato
+    if (alvo.ferias || candidato.ferias) {
+      novaEscala[alvo.id] = allBaseScales[alvo.id];
+    } else {
+      novaEscala[alvo.id] = { ...escala[candidato.id] };
+      for (let d = 1; d <= diasNum; d++) {
+        if (intervRef.current[`${candidato.id}_${d}`]) {
+          novosIntervalos[`${alvo.id}_${d}`] = intervRef.current[`${candidato.id}_${d}`];
+        }
+      }
+    }
+
+    // Candidato recebe a escala que era do Alvo
+    if (candidato.ferias || alvo.ferias) {
+      novaEscala[candidato.id] = allBaseScales[candidato.id];
+    } else {
+      novaEscala[candidato.id] = { ...escala[alvo.id] };
+      for (let d = 1; d <= diasNum; d++) {
+        if (intervRef.current[`${alvo.id}_${d}`]) {
+          novosIntervalos[`${candidato.id}_${d}`] = intervRef.current[`${alvo.id}_${d}`];
+        }
+      }
+    }
+
     setEscala(novaEscala);
     escalaRef.current = novaEscala;
-    salvarSupabase(novaEscala, intervRef.current, cfgRef.current, novaLista);
+    setIntervalos(novosIntervalos);
+    intervRef.current = novosIntervalos;
+    salvarSupabase(novaEscala, novosIntervalos, cfgRef.current, novaLista);
     
     setAba("escala");
     setTrocaHierarquiaAlvo(null);
