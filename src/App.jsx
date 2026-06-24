@@ -705,11 +705,33 @@ export default function EscalaFolga() {
     let alvo = novaLista.find(f => f.id === id);
     if (!alvo) return;
     
-    alvo = Object.assign(Object.create(FuncionarioModel.prototype), alvo);
-    alvo.cargoVago = !alvo.cargoVago;
-    if (alvo.cargoVago) {
-      alvo.nome = "";
+    if (!alvo.cargoVago) {
+      let prefixo = "";
+      if (alvo.nome.includes("-")) {
+        prefixo = alvo.nome.split("-")[0].trim() + " - ";
+      } else {
+        prefixo = alvo.funcao ? alvo.funcao.trim() + " - " : "";
+      }
+      alvo = Object.assign(Object.create(FuncionarioModel.prototype), alvo);
+      alvo.cargoVago = true;
+      alvo.nome = prefixo + "CARGO VAGO";
       alvo.ferias = null;
+    } else {
+      let prefixo = "";
+      if (alvo.nome.includes("-")) {
+        prefixo = alvo.nome.split("-")[0].trim();
+      } else {
+        prefixo = alvo.nome.replace(/CARGO VAGO/i, "").trim();
+      }
+      
+      const nomeNovo = window.prompt(`Digite o nome do novo funcionário para a vaga ${prefixo ? `'${prefixo}'` : ''}:`);
+      if (nomeNovo === null) return; // cancelou
+      
+      alvo = Object.assign(Object.create(FuncionarioModel.prototype), alvo);
+      alvo.cargoVago = false;
+      alvo.nome = prefixo 
+        ? prefixo + (nomeNovo.trim() ? " - " + nomeNovo.trim() : "")
+        : nomeNovo.trim();
     }
     novaLista = novaLista.map(f => f.id === id ? alvo : f);
     
