@@ -729,7 +729,7 @@ export default function EscalaFolga() {
       
       alvo = Object.assign(Object.create(FuncionarioModel.prototype), alvo);
       alvo.cargoVago = false;
-      alvo.nome = nomeNovo.trim();
+      alvo.nome = nomeNovo.trim().toUpperCase();
     }
     novaLista = novaLista.map(f => f.id === id ? alvo : f);
     
