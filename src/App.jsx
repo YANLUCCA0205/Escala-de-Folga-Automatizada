@@ -398,6 +398,8 @@ export default function EscalaFolga() {
   const [aba,            setAba]            = useState("escala");
   const [trocaAlvo,      setTrocaAlvo]      = useState(null);
   const [trocaHierarquiaAlvo, setTrocaHierarquiaAlvo] = useState(null);
+  const [buscaTroca,     setBuscaTroca]     = useState("");
+  const [candTrocaConfirmar, setCandTrocaConfirmar] = useState(null);
   const [trocaSugestoes, setTrocaSugestoes] = useState([]);
   const [filtroLoja,     setFiltroLoja]     = useState("");
   const [filtroSetor,    setFiltroSetor]    = useState("");
@@ -909,6 +911,8 @@ export default function EscalaFolga() {
   // ── troca de hierarquia ───────────────────────────────────────
   const abrirTrocaHierarquia = (func) => {
     setTrocaHierarquiaAlvo(func);
+    setBuscaTroca("");
+    setCandTrocaConfirmar(null);
     setAba("trocaHierarquia");
   };
 
@@ -1302,7 +1306,7 @@ export default function EscalaFolga() {
         {/* ════ TROCA DE HIERARQUIA ════ */}
         {aba === "trocaHierarquia" && trocaHierarquiaAlvo && (
           <div className="no-print">
-            <button onClick={() => { setAba("escala"); setTrocaHierarquiaAlvo(null); }} style={{ ...S.btn, marginBottom: 16 }}>← Voltar para a Escala</button>
+            <button onClick={() => { setAba("escala"); setTrocaHierarquiaAlvo(null); setCandTrocaConfirmar(null); setBuscaTroca(""); }} style={{ ...S.btn, marginBottom: 16 }}>← Voltar para a Escala</button>
             <div style={S.card}>
               <div style={S.cardTit}>🔄 Troca de Hierarquia</div>
               <p style={{ fontSize: 13, marginBottom: 16, color: "#444", lineHeight: 1.5 }}>
@@ -1310,9 +1314,21 @@ export default function EscalaFolga() {
                 <span style={{ fontSize: 11, color: "#888" }}>O nome e as férias se mantêm com cada pessoa, apenas o cargo, setor, e a ordem da escala base são invertidos.</span>
               </p>
 
+              <input 
+                type="text" 
+                placeholder="🔍 Pesquisar nome ou cargo..." 
+                value={buscaTroca} 
+                onChange={(e) => setBuscaTroca(e.target.value)} 
+                style={{ ...S.inpFull, marginBottom: 16, fontSize: 13, padding: "8px 12px" }} 
+              />
+
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
                 {funcionarios
                   .filter((f) => f.id !== trocaHierarquiaAlvo.id && f.unidade === trocaHierarquiaAlvo.unidade)
+                  .filter((f) => {
+                    const termo = buscaTroca.toLowerCase();
+                    return f.nome.toLowerCase().includes(termo) || (f.funcao && f.funcao.toLowerCase().includes(termo));
+                  })
                   .map((cand) => (
                     <div key={cand.id} style={{ border: "1px solid #ddd", borderRadius: 6, padding: "10px 12px", background: "#fff", display: "flex", flexDirection: "column", gap: 6 }}>
                       <div style={{ fontWeight: "bold", fontSize: 12, color: "#111" }}>{cand.nome}</div>
@@ -1320,13 +1336,37 @@ export default function EscalaFolga() {
                         {cand.funcao} ({cand.setor})<br/>
                         Turno: {cand.turno}
                       </div>
-                      <button onClick={() => executarTrocaHierarquia(cand)} style={{ ...S.btn, background: "#111", color: "#fff", border: "none", marginTop: 4 }}>
+                      <button onClick={() => setCandTrocaConfirmar(cand)} style={{ ...S.btn, background: "#111", color: "#fff", border: "none", marginTop: 4 }}>
                         Trocar com {cand.nome.split(" ")[0]}
                       </button>
                     </div>
                   ))}
               </div>
             </div>
+
+            {/* Modal de Confirmação */}
+            {candTrocaConfirmar && (
+              <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ background: "#fff", padding: "1.5rem", borderRadius: 8, maxWidth: 450, width: "90%", boxShadow: "0 10px 25px rgba(0,0,0,0.2)" }}>
+                  <div style={{ fontSize: 16, fontWeight: "bold", marginBottom: 16, color: "#111" }}>⚠️ Confirmar Troca de Hierarquia</div>
+                  <p style={{ fontSize: 13, lineHeight: 1.6, color: "#333", marginBottom: 20 }}>
+                    Tem certeza que quer trocar:<br/>
+                    <br/>
+                    <strong>{trocaHierarquiaAlvo.nome}</strong><br/>
+                    <span style={{ color: "#666" }}>{trocaHierarquiaAlvo.funcao} · {trocaHierarquiaAlvo.unidade}</span><br/>
+                    <br/>
+                    <span style={{ color: "#888", fontStyle: "italic" }}>com</span><br/>
+                    <br/>
+                    <strong>{candTrocaConfirmar.nome}</strong><br/>
+                    <span style={{ color: "#666" }}>{candTrocaConfirmar.funcao} · {candTrocaConfirmar.unidade}</span>?
+                  </p>
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    <button onClick={() => setCandTrocaConfirmar(null)} style={{ ...S.btn, fontWeight: "bold" }}>Cancelar</button>
+                    <button onClick={() => { executarTrocaHierarquia(candTrocaConfirmar); setCandTrocaConfirmar(null); }} style={{ ...S.btn, background: "#CC0000", color: "#fff", borderColor: "#CC0000", fontWeight: "bold" }}>Confirmar Troca</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
