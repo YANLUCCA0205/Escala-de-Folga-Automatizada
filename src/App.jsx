@@ -1495,7 +1495,7 @@ export default function EscalaFolga() {
                                     return (
                                       <tr key={func.id} style={{ background: "#ddd" }}>
                                         <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                          <span>CARGO VAGO — {func.funcao}</span>
+                                          <span>{func.nome}</span>
                                           <button className="no-print" onClick={() => toggleCargoVago(func.id)} title="Reativar cargo" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, padding: 0 }}>
                                             👁️
                                           </button>
