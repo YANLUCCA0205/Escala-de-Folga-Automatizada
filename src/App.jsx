@@ -698,6 +698,40 @@ export default function EscalaFolga() {
     });
     setFeriasModal(null);
   };
+
+  // ── cargo vago ────────────────────────────────────────────────
+  const toggleCargoVago = (id) => {
+    let novaLista = [...funcionarios];
+    let alvo = novaLista.find(f => f.id === id);
+    if (!alvo) return;
+    
+    alvo = Object.assign(Object.create(FuncionarioModel.prototype), alvo);
+    alvo.cargoVago = !alvo.cargoVago;
+    if (alvo.cargoVago) {
+      alvo.nome = "";
+      alvo.ferias = null;
+    }
+    novaLista = novaLista.map(f => f.id === id ? alvo : f);
+    
+    setFuncionarios(novaLista);
+    funcsRef.current = novaLista;
+    try { localStorage.setItem("funcionarios_salvos", JSON.stringify(novaLista)); } catch (e) { console.error(e); }
+
+    const cfg = new ConfiguracaoMes({ dataInicio, dias: diasNum, unidades: garantirCfg(cfgRef.current, novaLista.map((f) => f.unidade)) });
+    const allBaseScales = calcularEscala(novaLista, cfg);
+    
+    const novaEscala = { ...escalaRef.current };
+    if (alvo.cargoVago) {
+       novaEscala[id] = {};
+    } else {
+       novaEscala[id] = allBaseScales[id];
+    }
+    
+    setEscala(novaEscala);
+    escalaRef.current = novaEscala;
+    salvarSupabase(novaEscala, intervRef.current, cfgRef.current, novaLista);
+  };
+
   // ── salvar estado das folgas ─────────────────────────────────
   const salvarEstadoFolgas = async () => {
     const estado = {
@@ -1460,8 +1494,11 @@ export default function EscalaFolga() {
                                   if (func.cargoVago) {
                                     return (
                                       <tr key={func.id} style={{ background: "#ddd" }}>
-                                        <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic" }}>
-                                          CARGO VAGO — {func.funcao}
+                                        <td style={{ ...S.tdNome, color: "#888", fontSize: 10, fontStyle: "italic", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                          <span>CARGO VAGO — {func.funcao}</span>
+                                          <button className="no-print" onClick={() => toggleCargoVago(func.id)} title="Reativar cargo" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 14, padding: 0 }}>
+                                            👁️
+                                          </button>
                                         </td>
                                         {diasLista.map((d) => <td key={d} style={{ ...S.tdDia, background: "#ddd" }} />)}
                                       </tr>
@@ -1506,8 +1543,15 @@ export default function EscalaFolga() {
                                               style={{ cursor: "pointer", fontSize: 9, color: "#166534", flexShrink: 0 }}>🌴</span>
                                           )}
                                         </div>
-                                        <div className="print-hide" style={{ fontSize: 8, color: "#888", marginTop: 1, paddingLeft: 18, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                          {func.funcao}
+                                        <div className="print-hide" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 1, paddingLeft: 18 }}>
+                                          <div style={{ fontSize: 8, color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {func.funcao}
+                                          </div>
+                                          {!modoLimpeza && (
+                                            <button className="no-print" onClick={(e) => { e.stopPropagation(); toggleCargoVago(func.id); }} title="Desativar cargo" style={{ background: "transparent", border: "none", cursor: "pointer", fontSize: 12, padding: 0 }}>
+                                              ⏸️
+                                            </button>
+                                          )}
                                         </div>
                                       </td>
 
