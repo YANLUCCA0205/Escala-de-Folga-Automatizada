@@ -14,6 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -23,6 +24,7 @@ import { FORBIDDEN_PRODUCTION_TOKENS } from "../../scripts/tutorial-generator/se
 
 test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via Vite SSR sem controles públicos inseguros", async () => {
   const vite = await createServer({
+    cacheDir: path.join(os.tmpdir(), "uniao-erp-vite-ssr-test"),
     server: { middlewareMode: true, hmr: false, watch: null },
     appType: "custom",
     logLevel: "silent",

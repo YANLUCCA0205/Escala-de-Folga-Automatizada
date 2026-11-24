@@ -9,7 +9,22 @@ export default defineConfig({
     tailwindcss(),
     erpLocalBackendPlugin(),
   ],
+  optimizeDeps: {
+    entries: ['index.html'],
+    include: [
+      'react',
+      'react-dom',
+      'react-dom/client',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+      '@supabase/supabase-js',
+    ],
+    exclude: ['@electric-sql/pglite'],
+  },
   server: {
+    watch: {
+      ignored: ['**/.data/**', '**/backups/**'],
+    },
     fs: {
       // Bloqueia acesso estático direto a diretórios sensíveis de servidor e backups
       deny: ['.env', '.env.*', '.data/**', 'backups/**', 'server/**', 'supabase/**', 'scripts/**'],
