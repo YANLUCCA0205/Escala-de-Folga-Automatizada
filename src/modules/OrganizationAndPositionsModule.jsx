@@ -9,6 +9,7 @@ import {
   STATUS_VAGA_META,
 } from "../domain/scheduleEngine.js";
 import { createUniaoModuleUi } from "../theme/uniaoTheme.js";
+import { Tabs, PageHeader } from "../ui/index.jsx";
 
 export default function OrganizationAndPositionsModule({
   db,
@@ -16,12 +17,15 @@ export default function OrganizationAndPositionsModule({
   setSelectedUnitId,
   selectedYearMonth,
   initialTab = "positions",
+  initialSection = null,
   onMutateDb,
 }) {
   const activeReferenceDate = selectedYearMonth
     ? `${selectedYearMonth}-01`
     : new Date().toISOString().slice(0, 10);
-  const [subTab, setSubTab] = useState(initialTab); // 'structure' | 'positions'
+  const [activeSection, setActiveSection] = useState(
+    initialSection || (initialTab === "positions" ? "positions" : "companies")
+  );
   const [filterSectorId, setFilterSectorId] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [searchPos, setSearchPos] = useState("");
@@ -29,12 +33,12 @@ export default function OrganizationAndPositionsModule({
   // Modal de Edição Completa de Posto (Seção 16)
   const [editingPos, setEditingPos] = useState(null);
 
-  // Edição da Empresa Principal (Seção 6 — Corrige BUG-07)
+  // Edição da Empresa Principal (sem dados nominais reais hardcoded)
   const company = db.companies?.[0] || {
-    id: "comp_yuara_03",
-    legalName: "YUARA PRESTADORA SERVIÇOS LJ 03 LTDA",
+    id: "comp_default",
+    legalName: "",
     tradeName: "União Supermercados",
-    cnpj: "40.633.037/0001-71",
+    cnpj: "",
     active: true,
   };
   const [compLegalName, setCompLegalName] = useState(company.legalName || "");
@@ -141,7 +145,7 @@ export default function OrganizationAndPositionsModule({
         if (!draft.companies || draft.companies.length === 0) {
           draft.companies = [
             {
-              id: "comp_yuara_03",
+              id: "comp_default",
               legalName: compLegalName.trim(),
               tradeName: compTradeName.trim(),
               cnpj: compCnpj.trim(),
@@ -187,7 +191,7 @@ export default function OrganizationAndPositionsModule({
           const newId = `UNIT_${cleanCode}_${Date.now().toString().slice(-3)}`;
           draft.units.push({
             id: newId,
-            companyId: draft.companies[0]?.id || "comp_yuara_03",
+            companyId: draft.companies[0]?.id || "comp_default",
             code: cleanCode,
             name: cleanName,
             city: unitCity.trim(),
@@ -498,397 +502,444 @@ export default function OrganizationAndPositionsModule({
     }
   };
 
+  const sectionTabs = [
+    { id: "companies", label: "Empresas", icon: "building" },
+    { id: "units", label: "Unidades", icon: "store", badge: db.units.length },
+    { id: "sectors", label: "Setores", icon: "layers", badge: db.sectors.length },
+    { id: "roles", label: "Funções e cargos", icon: "briefcase", badge: db.roles.length },
+    {
+      id: "positions",
+      label: "Quadro de postos e vagas",
+      icon: "people",
+      badge: filteredPositions.length,
+    },
+  ];
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-      {/* Sub-navegação: Estrutura Organizacional apresentada ANTES ou junto ao Quadro de Postos (Seção 7) */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <button
-          onClick={() => setSubTab("structure")}
-          style={subTab === "structure" ? ui.subTabActive : ui.subTab}
-        >
-          🏛️ Estrutura Organizacional (Empresa, Unidades, Setores e Funções)
-        </button>
-        <button
-          onClick={() => setSubTab("positions")}
-          style={subTab === "positions" ? ui.subTabActive : ui.subTab}
-        >
-          🪑 Quadro de Postos e Vagas ({filteredPositions.length} em {selectedUnitId})
-        </button>
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <PageHeader
+        title={
+          activeSection === "positions"
+            ? "Quadro de postos e vagas"
+            : "Estrutura organizacional"
+        }
+        subtitle="Gestão de empresas, filiais, setores operacionais, catálogo de funções e dimensionamento de vagas."
+      />
 
-      {subTab === "structure" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* 1. Cadastro e Edição da Empresa e Unidades (Seção 6 — Corrige BUG-07) */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))",
-              gap: 16,
-            }}
+      <Tabs
+        items={sectionTabs}
+        activeId={activeSection}
+        onChange={setActiveSection}
+        ariaLabel="Seções da estrutura organizacional"
+      />
+
+      {activeSection === "companies" && (
+        <div style={{ ...ui.card, maxWidth: 680 }}>
+          <div style={ui.cardTitle}>Dados cadastrais da empresa</div>
+          <form
+            onSubmit={handleSaveCompany}
+            style={{ display: "flex", flexDirection: "column", gap: 12 }}
           >
-            <div style={ui.card}>
-              <div style={ui.cardTitle}>🏢 Dados da Empresa (Cabeçalhos, Relatórios e Impressão)</div>
-              <form onSubmit={handleSaveCompany} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div>
-                  <label style={ui.label}>Razão Social Oficial *</label>
-                  <input
-                    type="text"
-                    value={compLegalName}
-                    onChange={(e) => setCompLegalName(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 10 }}>
-                  <div>
-                    <label style={ui.label}>Nome Fantasia / Grupo</label>
-                    <input
-                      type="text"
-                      value={compTradeName}
-                      onChange={(e) => setCompTradeName(e.target.value)}
-                      style={ui.input}
-                    />
-                  </div>
-                  <div>
-                    <label style={ui.label}>CNPJ</label>
-                    <input
-                      type="text"
-                      value={compCnpj}
-                      onChange={(e) => setCompCnpj(e.target.value)}
-                      style={ui.input}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <button type="submit" style={ui.btnPrimary}>
-                    💾 Salvar Cadastro da Empresa
-                  </button>
-                </div>
-              </form>
+            <div>
+              <label style={ui.label}>Razão Social Oficial *</label>
+              <input
+                type="text"
+                value={compLegalName}
+                onChange={(e) => setCompLegalName(e.target.value)}
+                style={ui.input}
+                required
+              />
             </div>
-
-            <div style={ui.card}>
-              <div style={ui.cardTitle}>🏬 Unidades Operacionais (Lojas Vinculadas à Empresa)</div>
-              <form
-                onSubmit={handleSaveUnit}
-                style={{ display: "grid", gridTemplateColumns: "0.8fr 1.4fr 1fr auto", gap: 8, alignItems: "end", marginBottom: 12 }}
-              >
-                <div>
-                  <label style={ui.label}>Código</label>
-                  <input
-                    placeholder="Ex: LJ04"
-                    value={unitCode}
-                    onChange={(e) => setUnitCode(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Nome da Unidade</label>
-                  <input
-                    placeholder="Ex: LOJA 04"
-                    value={unitName}
-                    onChange={(e) => setUnitName(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Cidade</label>
-                  <input
-                    value={unitCity}
-                    onChange={(e) => setUnitCity(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <button type="submit" style={ui.btnPrimary}>
-                  {editingUnitId ? "Salvar" : "+ Loja"}
-                </button>
-              </form>
-
-              <table style={ui.table}>
-                <thead>
-                  <tr style={{ background: "#f1f5f9" }}>
-                    <th style={ui.th}>Código</th>
-                    <th style={{ ...ui.th, textAlign: "left" }}>Unidade</th>
-                    <th style={ui.th}>Postos</th>
-                    <th style={ui.th}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {db.units.map((u) => {
-                    const posCount = db.workPositions.filter((p) => p.unitId === u.id).length;
-                    return (
-                      <tr key={u.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700 }}>{u.code}</td>
-                        <td style={{ ...ui.td, fontWeight: 700 }}>
-                          {u.name}{" "}
-                          {u.id === selectedUnitId && (
-                            <span style={{ fontSize: 10, color: "#0284c7" }}>(Ativa)</span>
-                          )}
-                        </td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{posCount}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>
-                          <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
-                            <button
-                              onClick={() => {
-                                setEditingUnitId(u.id);
-                                setUnitCode(u.code);
-                                setUnitName(u.name);
-                                setUnitCity(u.city || "União");
-                                setUnitState(u.state || "BR");
-                              }}
-                              style={ui.btnSmall}
-                            >
-                              ✏ Editar
-                            </button>
-                            {db.units.length > 1 && (
-                              <button
-                                onClick={() => handleDeleteUnit(u)}
-                                style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
-                              >
-                                🗑️ Excluir
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* 2. Setores e Funções com Edição Completa */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))",
-              gap: 16,
-            }}
-          >
-            <div style={ui.card}>
-              <div style={ui.cardTitle}>
-                Setores Operacionais & Cobertura Mínima ({selectedUnitId})
-              </div>
-              <form
-                onSubmit={handleSaveSector}
-                style={{ display: "grid", gridTemplateColumns: "0.9fr 1.4fr 0.7fr 0.7fr auto", gap: 8, alignItems: "end", marginBottom: 14 }}
-              >
-                <div>
-                  <label style={ui.label}>Código</label>
-                  <input
-                    type="text"
-                    placeholder="PADARIA"
-                    value={newSectorCode}
-                    onChange={(e) => setNewSectorCode(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Nome do Setor</label>
-                  <input
-                    type="text"
-                    placeholder="Nome do Setor"
-                    value={newSectorName}
-                    onChange={(e) => setNewSectorName(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Mín. Útil</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={30}
-                    value={newSectorMinCov}
-                    onChange={(e) => setNewSectorMinCov(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Mín. Dom</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={30}
-                    value={newSectorSunCov}
-                    onChange={(e) => setNewSectorSunCov(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <button type="submit" style={ui.btnPrimary}>
-                  {editingSectorId ? "Salvar" : "+ Setor"}
-                </button>
-              </form>
-
-              <table style={ui.table}>
-                <thead>
-                  <tr style={{ background: "#f1f5f9" }}>
-                    <th style={{ ...ui.th, textAlign: "left" }}>Setor</th>
-                    <th style={ui.th}>Mín. Dia Útil</th>
-                    <th style={ui.th}>Mín. Domingo</th>
-                    <th style={ui.th}>Postos ({selectedUnitId})</th>
-                    <th style={ui.th}>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {db.sectors.map((s) => {
-                    const us = (db.unitSectors || []).find(
-                      (u) => u.unitId === selectedUnitId && u.sectorId === s.id
-                    );
-                    const minW = us?.minDailyCoverage ?? s.minDailyCoverage ?? 1;
-                    const minSun = us?.minSundayCoverage ?? Math.floor(minW * 0.6);
-                    const count = db.workPositions.filter(
-                      (p) => p.unitId === selectedUnitId && p.sectorId === s.id
-                    ).length;
-                    return (
-                      <tr key={s.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ ...ui.td, fontWeight: 600 }}>{s.name}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{minW}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{minSun}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{count}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>
-                          <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
-                            <button
-                              onClick={() => {
-                                setEditingSectorId(s.id);
-                                setNewSectorCode(s.code);
-                                setNewSectorName(s.name);
-                                setNewSectorMinCov(minW);
-                                setNewSectorSunCov(minSun);
-                              }}
-                              style={ui.btnSmall}
-                            >
-                              ✏ Editar
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSector(s)}
-                              style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
-                            >
-                              🗑️ Excluir
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <div style={ui.card}>
-              <div style={ui.cardTitle}>Catálogo de Funções / Cargos</div>
-              <form
-                onSubmit={handleSaveRole}
-                style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}
-              >
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 10 }}>
+              <div>
+                <label style={ui.label}>Nome Fantasia / Grupo</label>
                 <input
                   type="text"
-                  placeholder="Código (ex: PADEIRO)"
-                  value={newRoleCode}
-                  onChange={(e) => setNewRoleCode(e.target.value)}
+                  value={compTradeName}
+                  onChange={(e) => setCompTradeName(e.target.value)}
                   style={ui.input}
                 />
+              </div>
+              <div>
+                <label style={ui.label}>CNPJ</label>
                 <input
                   type="text"
-                  placeholder="Nome da Função"
-                  value={newRoleName}
-                  onChange={(e) => setNewRoleName(e.target.value)}
+                  value={compCnpj}
+                  onChange={(e) => setCompCnpj(e.target.value)}
                   style={ui.input}
                 />
-                <select
-                  value={newRoleCatId}
-                  onChange={(e) => setNewRoleCatId(e.target.value)}
-                  style={ui.select}
-                >
-                  {db.functionalCategories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={newRoleSecId}
-                  onChange={(e) => setNewRoleSecId(e.target.value)}
-                  style={ui.select}
-                >
-                  {db.sectors.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      Setor: {s.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  placeholder="Custo Projetado R$ (opcional)"
-                  value={newRoleCost}
-                  onChange={(e) => setNewRoleCost(e.target.value)}
-                  style={ui.input}
-                />
-                <button type="submit" style={ui.btnPrimary}>
-                  {editingRoleId ? "Salvar Edição da Função" : "+ Cadastrar Função"}
-                </button>
-              </form>
-
-              <div style={{ maxHeight: 340, overflowY: "auto" }}>
-                <table style={ui.table}>
-                  <thead>
-                    <tr style={{ background: "#f1f5f9" }}>
-                      <th style={{ ...ui.th, textAlign: "left" }}>Função</th>
-                      <th style={{ ...ui.th, textAlign: "left" }}>Setor Padrão</th>
-                      <th style={ui.th}>Postos</th>
-                      <th style={ui.th}>Ações</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {db.roles.map((r) => {
-                      const count = db.workPositions.filter(
-                        (p) => p.unitId === selectedUnitId && p.roleId === r.id
-                      ).length;
-                      return (
-                        <tr key={r.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                          <td style={{ ...ui.td, fontWeight: 600 }}>{r.name}</td>
-                          <td style={{ ...ui.td, fontSize: 11, color: "#64748b" }}>
-                            {sectorsById[r.defaultSectorId]?.name || "—"}
-                          </td>
-                          <td style={{ ...ui.td, textAlign: "center" }}>{count}</td>
-                          <td style={{ ...ui.td, textAlign: "center" }}>
-                            <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
-                              <button
-                                onClick={() => {
-                                  setEditingRoleId(r.id);
-                                  setNewRoleCode(r.code);
-                                  setNewRoleName(r.name);
-                                  setNewRoleCatId(r.categoryId || "CAT_PERECIVEIS");
-                                  setNewRoleSecId(r.defaultSectorId || "SEC_ACOUGUE");
-                                  setNewRoleCost(r.projectedMonthlyCost ?? "");
-                                }}
-                                style={ui.btnSmall}
-                              >
-                                ✏ Editar
-                              </button>
-                              <button
-                                onClick={() => handleDeleteRole(r)}
-                                style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
-                              >
-                                🗑️ Excluir
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
               </div>
             </div>
-          </div>
+            <div>
+              <button type="submit" style={ui.btnPrimary}>
+                Salvar cadastro da empresa
+              </button>
+            </div>
+          </form>
         </div>
-      ) : (
+      )}
+
+      {activeSection === "units" && (
+        <div style={ui.card}>
+          <div style={ui.cardTitle}>Unidades operacionais (Filiais)</div>
+          <form
+            onSubmit={handleSaveUnit}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "0.8fr 1.4fr 1fr auto",
+              gap: 8,
+              alignItems: "end",
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label style={ui.label}>Código</label>
+              <input
+                placeholder="Ex: LJ04"
+                value={unitCode}
+                onChange={(e) => setUnitCode(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Nome da Unidade</label>
+              <input
+                placeholder="Ex: LOJA 04"
+                value={unitName}
+                onChange={(e) => setUnitName(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Cidade</label>
+              <input
+                value={unitCity}
+                onChange={(e) => setUnitCity(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <button type="submit" style={ui.btnPrimary}>
+              {editingUnitId ? "Salvar unidade" : "Adicionar unidade"}
+            </button>
+          </form>
+
+          <table style={ui.table}>
+            <thead>
+              <tr>
+                <th style={ui.th}>Código</th>
+                <th style={ui.th}>Unidade</th>
+                <th style={ui.th}>Cidade / UF</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos</th>
+                <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {db.units.map((u) => {
+                const posCount = db.workPositions.filter((p) => p.unitId === u.id).length;
+                return (
+                  <tr key={u.id}>
+                    <td style={{ ...ui.td, fontWeight: 700 }}>{u.code}</td>
+                    <td style={{ ...ui.td, fontWeight: 600 }}>
+                      {u.name}{" "}
+                      {u.id === selectedUnitId && (
+                        <span style={{ fontSize: 12, color: "var(--erp-brand-blue)" }}>
+                          (Ativa)
+                        </span>
+                      )}
+                    </td>
+                    <td style={ui.td}>
+                      {u.city || "—"} {u.state ? `· ${u.state}` : ""}
+                    </td>
+                    <td style={{ ...ui.td, textAlign: "center" }}>{posCount}</td>
+                    <td style={{ ...ui.td, textAlign: "right" }}>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingUnitId(u.id);
+                            setUnitCode(u.code);
+                            setUnitName(u.name);
+                            setUnitCity(u.city || "");
+                            setUnitState(u.state || "MG");
+                          }}
+                          style={ui.btnSmall}
+                        >
+                          Editar
+                        </button>
+                        {db.units.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteUnit(u)}
+                            style={{ ...ui.btnSmall, color: "var(--erp-danger)" }}
+                          >
+                            Excluir
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeSection === "sectors" && (
+        <div style={ui.card}>
+          <div style={ui.cardTitle}>
+            Setores operacionais e cobertura mínima ({selectedUnitId})
+          </div>
+          <form
+            onSubmit={handleSaveSector}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "0.9fr 1.4fr 0.7fr 0.7fr auto",
+              gap: 8,
+              alignItems: "end",
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label style={ui.label}>Código</label>
+              <input
+                type="text"
+                placeholder="PADARIA"
+                value={newSectorCode}
+                onChange={(e) => setNewSectorCode(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Nome do Setor</label>
+              <input
+                type="text"
+                placeholder="Nome do Setor"
+                value={newSectorName}
+                onChange={(e) => setNewSectorName(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Mín. Útil</label>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={newSectorMinCov}
+                onChange={(e) => setNewSectorMinCov(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Mín. Dom</label>
+              <input
+                type="number"
+                min={0}
+                max={30}
+                value={newSectorSunCov}
+                onChange={(e) => setNewSectorSunCov(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <button type="submit" style={ui.btnPrimary}>
+              {editingSectorId ? "Salvar setor" : "Adicionar setor"}
+            </button>
+          </form>
+
+          <table style={ui.table}>
+            <thead>
+              <tr>
+                <th style={ui.th}>Setor</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Mín. Dia Útil</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Mín. Domingo</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitId})</th>
+                <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {db.sectors.map((s) => {
+                const us = (db.unitSectors || []).find(
+                  (u) => u.unitId === selectedUnitId && u.sectorId === s.id
+                );
+                const minW = us?.minDailyCoverage ?? s.minDailyCoverage ?? 1;
+                const minSun = us?.minSundayCoverage ?? Math.floor(minW * 0.6);
+                const count = db.workPositions.filter(
+                  (p) => p.unitId === selectedUnitId && p.sectorId === s.id
+                ).length;
+                return (
+                  <tr key={s.id}>
+                    <td style={{ ...ui.td, fontWeight: 600 }}>{s.name}</td>
+                    <td style={{ ...ui.td, textAlign: "center" }}>{minW}</td>
+                    <td style={{ ...ui.td, textAlign: "center" }}>{minSun}</td>
+                    <td style={{ ...ui.td, textAlign: "center" }}>{count}</td>
+                    <td style={{ ...ui.td, textAlign: "right" }}>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingSectorId(s.id);
+                            setNewSectorCode(s.code);
+                            setNewSectorName(s.name);
+                            setNewSectorMinCov(minW);
+                            setNewSectorSunCov(minSun);
+                          }}
+                          style={ui.btnSmall}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSector(s)}
+                          style={{ ...ui.btnSmall, color: "var(--erp-danger)" }}
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeSection === "roles" && (
+        <div style={ui.card}>
+          <div style={ui.cardTitle}>Catálogo de funções e cargos</div>
+          <form
+            onSubmit={handleSaveRole}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+              gap: 8,
+              alignItems: "end",
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label style={ui.label}>Código</label>
+              <input
+                type="text"
+                placeholder="Ex: PADEIRO"
+                value={newRoleCode}
+                onChange={(e) => setNewRoleCode(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Nome da Função</label>
+              <input
+                type="text"
+                placeholder="Nome da Função"
+                value={newRoleName}
+                onChange={(e) => setNewRoleName(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Categoria</label>
+              <select
+                value={newRoleCatId}
+                onChange={(e) => setNewRoleCatId(e.target.value)}
+                style={ui.select}
+              >
+                {db.functionalCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={ui.label}>Setor Padrão</label>
+              <select
+                value={newRoleSecId}
+                onChange={(e) => setNewRoleSecId(e.target.value)}
+                style={ui.select}
+              >
+                {db.sectors.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label style={ui.label}>Custo Projetado (R$)</label>
+              <input
+                type="number"
+                placeholder="Opcional"
+                value={newRoleCost}
+                onChange={(e) => setNewRoleCost(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <button type="submit" style={ui.btnPrimary}>
+              {editingRoleId ? "Salvar função" : "Adicionar função"}
+            </button>
+          </form>
+
+          <table style={ui.table}>
+            <thead>
+              <tr>
+                <th style={ui.th}>Função / Cargo</th>
+                <th style={ui.th}>Setor Padrão</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitId})</th>
+                <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {db.roles.map((r) => {
+                const count = db.workPositions.filter(
+                  (p) => p.unitId === selectedUnitId && p.roleId === r.id
+                ).length;
+                return (
+                  <tr key={r.id}>
+                    <td style={{ ...ui.td, fontWeight: 600 }}>{r.name}</td>
+                    <td style={{ ...ui.td, color: "var(--erp-ink-secondary)" }}>
+                      {sectorsById[r.defaultSectorId]?.name || "—"}
+                    </td>
+                    <td style={{ ...ui.td, textAlign: "center" }}>{count}</td>
+                    <td style={{ ...ui.td, textAlign: "right" }}>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingRoleId(r.id);
+                            setNewRoleCode(r.code);
+                            setNewRoleName(r.name);
+                            setNewRoleCatId(r.categoryId || "CAT_PERECIVEIS");
+                            setNewRoleSecId(r.defaultSectorId || "SEC_ACOUGUE");
+                            setNewRoleCost(r.projectedMonthlyCost ?? "");
+                          }}
+                          style={ui.btnSmall}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRole(r)}
+                          style={{ ...ui.btnSmall, color: "var(--erp-danger)" }}
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeSection === "positions" && (
         <>
-          {/* Gerador Automático de Postos por Quantidade */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              ➕ Criação Automática de Postos de Trabalho por Quantidade ({selectedUnitId})
+              Criação de postos de trabalho em lote ({selectedUnitId})
             </div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
               Ao informar a Função e a Quantidade (ex.: <code>Açougueiro</code> · <code>3</code>), o

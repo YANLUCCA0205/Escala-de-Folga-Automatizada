@@ -17,7 +17,6 @@ import { createUniaoModuleUi } from "../theme/uniaoTheme.js";
 export default function DashboardAndBiModule({
   db,
   selectedUnitId,
-  setSelectedUnitId,
   selectedYearMonth,
   setSelectedYearMonth,
   onNavigate,

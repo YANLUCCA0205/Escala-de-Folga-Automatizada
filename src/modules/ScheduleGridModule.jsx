@@ -5,13 +5,12 @@
 // Construir Escala Manual, Limpar Mês, Validação em 10 Níveis e Governança Publicada
 // =============================================================================
 
-import { useState, useMemo, useCallback } from "react";
+import { Fragment, useState, useMemo, useCallback } from "react";
 import {
   listDatesInYearMonth,
   getPreviousYearMonth,
   getNextYearMonth,
   getDayOfWeekISO,
-  addDaysISO,
   generateEmployeeScheduleForMonth,
   balanceSectorSundayLunchSlots,
   projectNextMonthFirstRestDate,
@@ -30,33 +29,39 @@ import {
 } from "../domain/scheduleEngine.js";
 import UniaoLogo from "../components/UniaoLogo.jsx";
 import { createUniaoModuleUi } from "../theme/uniaoTheme.js";
+import {
+  Icon,
+  Button,
+  Badge,
+  PopoverMenu,
+  SearchInput,
+} from "../ui/index.jsx";
 
 const BRUSH_TOOLS = [
-  { id: "NONE", label: "🖱️ Clique Contextual (Menu)", bg: "#f8fafc", color: "#142B4D" },
-  { id: "T", label: "🖌️ Pincel: Trabalhando (T)", bg: "#dcfce7", color: "#15803d" },
-  { id: "F", label: "🖌️ Pincel: Folga Normal (F)", bg: "#EBF2FA", color: "#2B5690" },
-  { id: "A", label: "🖌️ Pincel: Folga Adicional (A)", bg: "#ede9fe", color: "#6d28d9" },
-  { id: "MEIO_EXP", label: "🖌️ Pincel: Meio Expediente (1/2)", bg: "#fef3c7", color: "#b45309" },
-  { id: "LUNCH_1", label: "🍽️ Almoço 1 (09-10h)", bg: "#f0fdf4", color: "#166534" },
-  { id: "LUNCH_2", label: "🍽️ Almoço 2 (10-11h)", bg: "#f0fdf4", color: "#166534" },
-  { id: "LUNCH_3", label: "🍽️ Almoço 3 (11-12h)", bg: "#f0fdf4", color: "#166534" },
-  { id: "LUNCH_4", label: "🍽️ Almoço 4 (12-13h)", bg: "#f0fdf4", color: "#166534" },
-  { id: "EMPTY", label: "🗑️ Pincel: Excluir / Limpar (—)", bg: "#fff1f2", color: "#be123c" },
-  { id: "AUTO_RESTORE", label: "🧹 Borracha (Restaurar Automático)", bg: "#f1f5f9", color: "#475569" },
+  { id: "T", group: "Jornada", label: "Trabalhando (T)" },
+  { id: "F", group: "Folgas", label: "Folga normal (F)" },
+  { id: "A", group: "Folgas", label: "Folga adicional (A)" },
+  { id: "MEIO_EXP", group: "Jornada", label: "Meio expediente (1/2)" },
+  { id: "LUNCH_1", group: "Intervalos", label: "Almoço 1 (09–10h)" },
+  { id: "LUNCH_2", group: "Intervalos", label: "Almoço 2 (10–11h)" },
+  { id: "LUNCH_3", group: "Intervalos", label: "Almoço 3 (11–12h)" },
+  { id: "LUNCH_4", group: "Intervalos", label: "Almoço 4 (12–13h)" },
+  { id: "AUTO_RESTORE", group: "Correção", label: "Borracha (Restaurar regra)" },
+  { id: "EMPTY", group: "Correção", label: "Limpar célula (—)" },
 ];
 
 export default function ScheduleGridModule({
   db,
   selectedUnitId,
-  setSelectedUnitId,
   selectedYearMonth,
   setSelectedYearMonth,
   currentUserRole = "ADMIN",
-  currentUserEmail = "admin@uniaosupermercados.com.br",
+  currentUserEmail = "operador@uniaosupermercados.com.br",
+  syncStatus = "idle",
   onMutateDb,
   onNavigate,
 }) {
-  // Filtros e modos visuais (Seção 8)
+  // Filtros e modos visuais (Seção 10)
   const [filterSectorId, setFilterSectorId] = useState("");
   const [filterShiftPeriod, setFilterShiftPeriod] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
@@ -64,8 +69,13 @@ export default function ScheduleGridModule({
   const [showVacantPositions, setShowVacantPositions] = useState(true);
   const [showPrevMonthTail, setShowPrevMonthTail] = useState(true);
   const [viewDensity, setViewDensity] = useState("compact"); // 'compact' | 'detailed'
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(false);
+  const [isExpandedFullscreen, setIsExpandedFullscreen] = useState(false);
+  const [collapsedSectorIds, setCollapsedSectorIds] = useState(() => new Set());
 
-  // Modo Pincel, Popover Contextual e Histórico Undo/Redo (Seções 9 e 10)
+  // Modo Pincel Contextual, Popover de Célula e Histórico Undo/Redo
+  const [brushModeActive, setBrushModeActive] = useState(false);
   const [activeBrush, setActiveBrush] = useState("NONE");
   const [isMousePainting, setIsMousePainting] = useState(false);
   const [cellPopover, setCellPopover] = useState(null); // { emp, pos, isoDate, anchorRect }
@@ -197,7 +207,32 @@ export default function ScheduleGridModule({
     ]
   );
 
-  const conflicts = validationChecklist.allConflicts;
+  // Índice rápido de erros/alertas por (employeeId, workDate) para sinalização direta na célula
+  const conflictsByEmpDate = useMemo(() => {
+    const map = {};
+    for (const c of validationChecklist.allConflicts || []) {
+      const empId = c.employeeId;
+      const dt = c.workDate || c.date;
+      if (!empId || !dt) continue;
+      if (!map[empId]) map[empId] = {};
+      if (!map[empId][dt]) map[empId][dt] = [];
+      map[empId][dt].push(c);
+    }
+    return map;
+  }, [validationChecklist.allConflicts]);
+
+  const toggleSectorCollapse = (sectorId) => {
+    setCollapsedSectorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(sectorId)) next.delete(sectorId);
+      else next.add(sectorId);
+      return next;
+    });
+  };
+
+  const expandAllSectors = () => setCollapsedSectorIds(new Set());
+  const collapseAllSectors = () =>
+    setCollapsedSectorIds(new Set((db.sectors || []).map((s) => s.id)));
 
   // Empilha snapshot para Desfazer / Refazer na sessão
   const pushUndoSnapshot = useCallback(
@@ -1072,98 +1107,527 @@ export default function ScheduleGridModule({
     searchEmp,
   ]);
 
-  const dayColWidth = viewDensity === "detailed" ? 44 : 33;
+  const dayColWidth = viewDensity === "detailed" ? 44 : 34;
+
+  const activeAdvancedFilterCount = [
+    filterShiftPeriod,
+    filterStatus,
+    !showPrevMonthTail ? "no_tail" : "",
+    !showVacantPositions ? "no_vacant" : "",
+  ].filter(Boolean).length;
+
+  const clearAllFilters = () => {
+    setFilterSectorId("");
+    setSearchEmp("");
+    setFilterShiftPeriod("");
+    setFilterStatus("");
+    setShowPrevMonthTail(true);
+    setShowVacantPositions(true);
+  };
+
+  const handleExportCsv = () => {
+    const headerCols = [
+      "Posto",
+      "Setor",
+      "Funcao_Posto",
+      "Colaborador",
+      "Regra",
+      "Turno",
+      ...monthDates.map((d) => d.slice(8, 10)),
+      "Projecao_Prox_Mes",
+    ];
+    const csvLines = [headerCols.join(";")];
+    for (const { sector, rows } of sectorsToRender) {
+      for (const { pos, emp, shift, rule } of rows) {
+        const dayVals = monthDates.map((d) => {
+          if (!emp) return "";
+          const en = entriesByEmpDate[emp.id]?.[d];
+          const st = en?.status || "T";
+          return en?.lunchSlot && (st === "T" || st === "MEIO_EXP")
+            ? `${st}(N0${en.lunchSlot})`
+            : st;
+        });
+        const rowVals = [
+          pos.isSharedRateio ? "RATEIO" : pos.code,
+          sector.name,
+          pos.title,
+          emp ? emp.fullName : `VAGA (${pos.status})`,
+          rule?.code || "",
+          shift ? `${shift.entryTime}-${shift.effectiveExitTime}` : "",
+          ...dayVals,
+          emp ? getNextMonthFirstRestLabel(emp) : "",
+        ].map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`);
+        csvLines.push(rowVals.join(";"));
+      }
+    }
+    const blob = new Blob(["\uFEFF" + csvLines.join("\n")], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `escala-${selectedUnitId.toLowerCase()}-${selectedYearMonth}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRebalanceSundayLunch = () => {
+    if (isLockedPublished) return;
+    pushUndoSnapshot("Balancear Almoços de Domingo/Feriado");
+    onMutateDb({
+      permission: "EDIT_SCHEDULE",
+      module: "ESCALA_MENSAL",
+      action: "BALANCEAR_ALMOCOS_DOMINGO",
+      entityType: "MONTHLY_SCHEDULE",
+      entityId: `${selectedUnitId}_${selectedYearMonth}`,
+      unitId: selectedUnitId,
+      yearMonth: selectedYearMonth,
+      summary: `Redistribuídas faixas de almoço (1..4) por setor e turno em ${selectedYearMonth} (${selectedUnitId}).`,
+      updater: (draft) => {
+        const cur = draft.dailyEntriesByMonth[selectedYearMonth] || [];
+        draft.dailyEntriesByMonth[selectedYearMonth] = balanceSectorSundayLunchSlots({
+          entries: cur,
+          allocations: draft.allocations,
+          shiftsById,
+          preserveManual: true,
+        });
+      },
+    });
+  };
+
+  const handleGridCellKeyDown = (ev, emp, pos, isoDate) => {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      handleCellInteraction(emp, pos, isoDate, ev, false);
+      return;
+    }
+    if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(ev.key)) return;
+    ev.preventDefault();
+    const td = ev.currentTarget;
+    const tr = td.parentElement;
+    if (!tr) return;
+    const colIndex = Array.from(tr.children).indexOf(td);
+    let targetCell = null;
+    if (ev.key === "ArrowRight") targetCell = td.nextElementSibling;
+    else if (ev.key === "ArrowLeft") targetCell = td.previousElementSibling;
+    else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+      let siblingRow = ev.key === "ArrowDown" ? tr.nextElementSibling : tr.previousElementSibling;
+      while (siblingRow && siblingRow.dataset.sectorHeader === "true") {
+        siblingRow =
+          ev.key === "ArrowDown"
+            ? siblingRow.nextElementSibling
+            : siblingRow.previousElementSibling;
+      }
+      if (siblingRow && siblingRow.children[colIndex]) {
+        targetCell = siblingRow.children[colIndex];
+      }
+    }
+    if (targetCell && typeof targetCell.focus === "function" && targetCell.tabIndex >= 0) {
+      targetCell.focus();
+    }
+  };
+
+  const activeUnitObj = (db.units || []).find((u) => u.id === selectedUnitId);
+  const totalDayCols = (showPrevMonthTail ? prevTailDates.length : 0) + monthDates.length;
 
   return (
     <div
-      style={{ display: "flex", flexDirection: "column", gap: 12 }}
+      style={
+        isExpandedFullscreen
+          ? {
+              position: "fixed",
+              inset: 0,
+              zIndex: 1800,
+              background: "var(--erp-bg-canvas)",
+              padding: "12px 16px",
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }
+          : { display: "flex", flexDirection: "column", gap: 10 }
+      }
       onMouseUp={() => setIsMousePainting(false)}
     >
-      {/* Banner de Governança quando a escala está PUBLICADA (Seção 15) */}
-      {isLockedPublished && (
+      {/* 1. CABEÇALHO OPERACIONAL COMPACTO */}
+      <div
+        className="erp-surface no-print"
+        style={{
+          padding: "10px 14px",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <strong style={{ fontSize: "var(--erp-text-lg)", color: "var(--erp-ink)" }}>
+            Escala mensal · {selectedYearMonth}
+          </strong>
+          <Badge tone="neutral">{activeUnitObj?.name || selectedUnitId}</Badge>
+          <ScheduleStatusPill
+            status={currentMonthlySchedule.status}
+            version={currentMonthlySchedule.versionNumber || 1}
+          />
+          <button
+            type="button"
+            onClick={handleOpenValidationModal}
+            className={`erp-badge ${
+              validationChecklist.blockingErrors.length > 0
+                ? "erp-badge--danger"
+                : validationChecklist.operationalWarnings.length > 0
+                  ? "erp-badge--warning"
+                  : "erp-badge--success"
+            }`}
+            style={{ cursor: "pointer" }}
+            title="Abrir diagnóstico completo de validação em 10 níveis"
+          >
+            {validationChecklist.blockingErrors.length} erros ·{" "}
+            {validationChecklist.operationalWarnings.length} alertas
+          </button>
+          {syncStatus === "saving" && (
+            <Badge tone="warning" dot>
+              Gravando alterações...
+            </Badge>
+          )}
+          {undoStack.length > 0 && syncStatus !== "saving" && (
+            <span style={{ fontSize: 12, color: "var(--erp-ink-muted)" }}>
+              {undoStack.length} ajuste(s) na sessão
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {isLockedPublished ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="unlock"
+              onClick={() => setReopenModalOpen(true)}
+            >
+              Reabrir escala (nova versão)
+            </Button>
+          ) : currentMonthlySchedule.status === "VALIDATED" ||
+            validationChecklist.blockingErrors.length === 0 ? (
+            <Button
+              variant="primary"
+              size="sm"
+              icon="check"
+              onClick={() => handleConfirmLifecycleChange("PUBLISHED")}
+            >
+              Publicar escala oficial
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              size="sm"
+              icon="shield"
+              onClick={handleOpenValidationModal}
+            >
+              Revisar pendências ({validationChecklist.blockingErrors.length})
+            </Button>
+          )}
+
+          <Button
+            variant="tertiary"
+            size="sm"
+            icon={isExpandedFullscreen ? "minimize" : "maximize"}
+            onClick={() => setIsExpandedFullscreen((v) => !v)}
+            title={isExpandedFullscreen ? "Sair da tela ampliada" : "Ampliar área da grade"}
+          >
+            {isExpandedFullscreen ? "Reduzir" : "Ampliar"}
+          </Button>
+        </div>
+      </div>
+
+      {/* 2. BARRA DE FILTROS + FERRAMENTAS ORGANIZADAS POR FINALIDADE */}
+      <div
+        className="erp-surface no-print"
+        style={{ padding: "8px 12px", display: "flex", flexDirection: "column", gap: 8 }}
+      >
         <div
-          className="no-print"
           style={{
-            background: "#dcfce7",
-            border: "2px solid #16a34a",
-            borderRadius: 10,
-            padding: "10px 16px",
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
             flexWrap: "wrap",
-            gap: 10,
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
           }}
         >
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#14532d" }}>
-              🔒 ESCALA OFICIALMENTE PUBLICADA (Versão #{currentMonthlySchedule.versionNumber || 1}) — Bloqueada contra edições acidentais
-            </div>
-            <div style={{ fontSize: 11.5, color: "#166534" }}>
-              Publicada em{" "}
-              {currentMonthlySchedule.publishedAt
-                ? new Date(currentMonthlySchedule.publishedAt).toLocaleString("pt-BR")
-                : "data registrada"}
-              . Para realizar alterações, reabra formalmente a escala informando o motivo.
-            </div>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <input
+              type="month"
+              aria-label="Competência"
+              value={selectedYearMonth}
+              onChange={(e) => e.target.value && setSelectedYearMonth(e.target.value)}
+              className="erp-input erp-input--sm"
+              style={{ width: 142 }}
+            />
+            <select
+              aria-label="Filtrar por setor"
+              value={filterSectorId}
+              onChange={(e) => setFilterSectorId(e.target.value)}
+              className="erp-select erp-select--sm"
+              style={{ width: 195 }}
+            >
+              <option value="">Todos os setores</option>
+              {db.sectors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+            <SearchInput
+              size="sm"
+              value={searchEmp}
+              onChange={setSearchEmp}
+              onClear={() => setSearchEmp("")}
+              placeholder="Colaborador ou posto..."
+              style={{ width: 195 }}
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="filter"
+              onClick={() => setAdvancedFiltersOpen((v) => !v)}
+            >
+              Filtros{activeAdvancedFilterCount > 0 ? ` (${activeAdvancedFilterCount})` : ""}
+            </Button>
+            {(filterSectorId || searchEmp || activeAdvancedFilterCount > 0) && (
+              <Button variant="tertiary" size="sm" icon="x" onClick={clearAllFilters}>
+                Limpar
+              </Button>
+            )}
           </div>
-          <button
-            onClick={() => setReopenModalOpen(true)}
+
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+            <PopoverMenu
+              trigger={({ toggle }) => (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="refresh"
+                  iconRight="chevronDown"
+                  disabled={isLockedPublished}
+                  onClick={toggle}
+                >
+                  Planejamento
+                </Button>
+              )}
+              items={[
+                {
+                  id: "gen_cont",
+                  icon: "refresh",
+                  label: `Gerar com continuidade (${prevYearMonth})`,
+                  onClick: () => handleGenerateMonthSchedule(true),
+                },
+                {
+                  id: "lunch_bal",
+                  icon: "clock",
+                  label: "Balancear intervalos de domingo",
+                  onClick: handleRebalanceSundayLunch,
+                },
+                {
+                  id: "manual_build",
+                  icon: "sliders",
+                  label: "Construir escala manual...",
+                  onClick: () => setManualBuildModalOpen(true),
+                },
+              ]}
+            />
+
+            <Button
+              variant={brushModeActive ? "primary" : "secondary"}
+              size="sm"
+              icon="brush"
+              disabled={isLockedPublished}
+              onClick={() => {
+                setBrushModeActive((prev) => {
+                  const next = !prev;
+                  setActiveBrush(next ? "F" : "NONE");
+                  return next;
+                });
+              }}
+            >
+              {brushModeActive ? "Pincel ativo" : "Modo pincel"}
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="undo"
+              disabled={isLockedPublished || undoStack.length === 0}
+              onClick={handleUndo}
+              title={
+                undoStack.length
+                  ? `Desfazer: ${undoStack[undoStack.length - 1].label}`
+                  : "Nada para desfazer"
+              }
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="redo"
+              disabled={isLockedPublished || redoStack.length === 0}
+              onClick={handleRedo}
+              title="Refazer última edição"
+            />
+
+            <Button
+              variant="secondary"
+              size="sm"
+              icon="shield"
+              onClick={handleOpenValidationModal}
+            >
+              Validação
+            </Button>
+
+            <PopoverMenu
+              trigger={({ toggle }) => (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="eye"
+                  iconRight="chevronDown"
+                  onClick={toggle}
+                >
+                  Exibição
+                </Button>
+              )}
+              items={[
+                {
+                  id: "density",
+                  icon: "layers",
+                  label:
+                    viewDensity === "compact"
+                      ? "Alternar para modo detalhado (+Horas)"
+                      : "Alternar para modo compacto",
+                  onClick: () =>
+                    setViewDensity((d) => (d === "compact" ? "detailed" : "compact")),
+                },
+                {
+                  id: "expand_all",
+                  icon: "chevronDown",
+                  label: "Expandir todos os setores",
+                  onClick: expandAllSectors,
+                },
+                {
+                  id: "collapse_all",
+                  icon: "chevronRight",
+                  label: "Recolher todos os setores",
+                  onClick: collapseAllSectors,
+                },
+                { separator: true },
+                {
+                  id: "legend",
+                  icon: "info",
+                  label: legendOpen ? "Ocultar legenda de siglas" : "Exibir legenda de siglas",
+                  onClick: () => setLegendOpen((v) => !v),
+                },
+              ]}
+            />
+
+            <PopoverMenu
+              trigger={({ toggle }) => (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon="printer"
+                  iconRight="chevronDown"
+                  onClick={toggle}
+                >
+                  Documentos
+                </Button>
+              )}
+              items={[
+                {
+                  id: "print",
+                  icon: "printer",
+                  label: "Imprimir planilha oficial (Paisagem A4)",
+                  onClick: () => window.print(),
+                },
+                {
+                  id: "export_csv",
+                  icon: "download",
+                  label: "Exportar competência (CSV)",
+                  onClick: handleExportCsv,
+                },
+                ...(isLockedPublished
+                  ? [
+                      { separator: true },
+                      {
+                        id: "reopen",
+                        icon: "unlock",
+                        label: "Reabrir escala publicada...",
+                        onClick: () => setReopenModalOpen(true),
+                      },
+                    ]
+                  : []),
+              ]}
+            />
+
+            {!isLockedPublished && (
+              <PopoverMenu
+                trigger={({ toggle }) => (
+                  <Button
+                    variant="tertiary"
+                    size="sm"
+                    icon="more"
+                    onClick={toggle}
+                    title="Ações avançadas"
+                  />
+                )}
+                items={[
+                  {
+                    id: "regen_overwrite",
+                    icon: "refresh",
+                    label: "Recalcular descartando ajustes manuais",
+                    danger: true,
+                    onClick: () => {
+                      if (
+                        window.confirm(
+                          "Recalcular integralmente a competência substituindo todas as edições manuais?"
+                        )
+                      ) {
+                        handleGenerateMonthSchedule(false);
+                      }
+                    },
+                  },
+                  { separator: true },
+                  {
+                    id: "clear_month",
+                    icon: "trash",
+                    label: "Limpar lançamentos da competência...",
+                    danger: true,
+                    onClick: () => setClearMonthModalOpen(true),
+                  },
+                ]}
+              />
+            )}
+          </div>
+        </div>
+
+        {advancedFiltersOpen && (
+          <div
             style={{
-              ...ui.btnPrimary,
-              background: "#15803d",
-              border: "1px solid #14532d",
+              paddingTop: 8,
+              borderTop: "1px solid var(--erp-border)",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 14,
+              fontSize: 12,
             }}
           >
-            🔓 Reabrir Escala Publicada (Nova Versão)
-          </button>
-        </div>
-      )}
-
-      {/* Barra Principal de Controle da Escala Mensal */}
-      <div className="no-print" style={ui.card}>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 10,
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <div>
-              <label style={ui.label}>Competência (Mês/Ano)</label>
-              <input
-                type="month"
-                value={selectedYearMonth}
-                onChange={(e) => e.target.value && setSelectedYearMonth(e.target.value)}
-                style={ui.input}
-              />
-            </div>
-
-            <div>
-              <label style={ui.label}>Setor</label>
-              <select
-                value={filterSectorId}
-                onChange={(e) => setFilterSectorId(e.target.value)}
-                style={ui.select}
-              >
-                <option value="">Todos os Setores</option>
-                {db.sectors.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label style={ui.label}>Turno</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontWeight: 600, color: "var(--erp-ink-secondary)" }}>Turno:</span>
               <select
                 value={filterShiftPeriod}
                 onChange={(e) => setFilterShiftPeriod(e.target.value)}
-                style={ui.select}
+                className="erp-select erp-select--sm"
               >
                 <option value="">Todos</option>
                 <option value="MANHÃ">Manhã</option>
@@ -1171,739 +1635,782 @@ export default function ScheduleGridModule({
               </select>
             </div>
 
-            <div>
-              <label style={ui.label}>Filtrar Status no Mês</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontWeight: 600, color: "var(--erp-ink-secondary)" }}>Ocorrência:</span>
               <select
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
-                style={ui.select}
+                className="erp-select erp-select--sm"
               >
-                <option value="">Todos os Status</option>
-                <option value="F">Com Folga Normal (F)</option>
-                <option value="A">Com Folga Adicional (A)</option>
-                <option value="V">Em Férias (FÉR)</option>
+                <option value="">Todas</option>
+                <option value="F">Com folga normal (F)</option>
+                <option value="A">Com folga adicional (A)</option>
+                <option value="V">Em férias (FÉR)</option>
                 <option value="INSS">Afastamento INSS / LM</option>
-                <option value="EMPTY">Com Células Vazias (—)</option>
+                <option value="EMPTY">Com células vazias (—)</option>
               </select>
             </div>
 
-            <div>
-              <label style={ui.label}>Buscar Colaborador / Posto</label>
-              <input
-                type="text"
-                placeholder="🔍 Nome ou cargo..."
-                value={searchEmp}
-                onChange={(e) => setSearchEmp(e.target.value)}
-                style={{ ...ui.input, width: 155 }}
-              />
-            </div>
-          </div>
-
-          {/* Ações de Construção Manual, Geração Contínua, Validação, Publicação e Impressão */}
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            <ScheduleStatusPill
-              status={currentMonthlySchedule.status}
-              version={currentMonthlySchedule.versionNumber || 1}
-            />
-
-            <button
-              onClick={() => handleGenerateMonthSchedule(true)}
-              disabled={isLockedPublished}
-              style={{ ...ui.btnPrimary, opacity: isLockedPublished ? 0.5 : 1 }}
-              title={`Calcula ${selectedYearMonth} continuando os ciclos reais de ${prevYearMonth}`}
-            >
-              🔄 Gerar c/ Continuidade ({prevYearMonth})
-            </button>
-
-            <button
-              onClick={() => setManualBuildModalOpen(true)}
-              disabled={isLockedPublished}
-              style={{ ...ui.btnSecondary, opacity: isLockedPublished ? 0.5 : 1 }}
-            >
-              🛠️ Construir Escala Manual
-            </button>
-
-            <button
-              onClick={() => setClearMonthModalOpen(true)}
-              disabled={isLockedPublished}
-              style={{
-                ...ui.btnSecondary,
-                color: "#b45309",
-                borderColor: "#fcd34d",
-                opacity: isLockedPublished ? 0.5 : 1,
-              }}
-            >
-              🧹 Limpar Mês
-            </button>
-
-            <button
-              onClick={handleOpenValidationModal}
-              style={{ ...ui.btnSecondary, borderColor: "#1d4ed8", color: "#1d4ed8" }}
-            >
-              ✓ Validar ({validationChecklist.blockingErrors.length} Erros /{" "}
-              {validationChecklist.operationalWarnings.length} Alertas)
-            </button>
-
-            {!isLockedPublished && (
-              <button
-                onClick={() => handleConfirmLifecycleChange("PUBLISHED")}
-                style={{
-                  ...ui.btnSecondary,
-                  background: "#166534",
-                  color: "#fff",
-                  borderColor: "#166534",
-                }}
-              >
-                📢 Publicar Escala
-              </button>
-            )}
-
-            <button onClick={() => window.print()} style={ui.btnSecondary}>
-              🖨️ Imprimir
-            </button>
-          </div>
-        </div>
-
-        {/* Segunda Linha: Barra de Modo Pincel + Desfazer/Refazer + Modo Compacto/Detalhado */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 8,
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginTop: 10,
-            paddingTop: 10,
-            borderTop: "1px solid #e2e8f0",
-          }}
-        >
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: "#334155", marginRight: 4 }}>
-              Ferramenta de Edição:
-            </span>
-            {BRUSH_TOOLS.map((tool) => {
-              const active = activeBrush === tool.id;
-              return (
-                <button
-                  key={tool.id}
-                  onClick={() => setActiveBrush(tool.id)}
-                  disabled={isLockedPublished}
-                  style={{
-                    padding: "4px 8px",
-                    borderRadius: 6,
-                    fontSize: 10.5,
-                    fontWeight: active ? 800 : 600,
-                    cursor: isLockedPublished ? "not-allowed" : "pointer",
-                    background: active ? "var(--uniao-red, #E9403C)" : tool.bg,
-                    color: active ? "#fff" : tool.color,
-                    border: active ? "2px solid #2B5690" : "1px solid #cbd5e1",
-                  }}
-                >
-                  {tool.label}
-                </button>
-              );
-            })}
-          </div>
-
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              onClick={handleUndo}
-              disabled={isLockedPublished || undoStack.length === 0}
-              style={{
-                ...ui.btnSecondary,
-                padding: "4px 9px",
-                fontSize: 11,
-                opacity: undoStack.length === 0 || isLockedPublished ? 0.45 : 1,
-              }}
-              title={undoStack.length ? `Desfazer: ${undoStack[undoStack.length - 1].label}` : "Nada para desfazer"}
-            >
-              ↩ Desfazer ({undoStack.length})
-            </button>
-            <button
-              onClick={handleRedo}
-              disabled={isLockedPublished || redoStack.length === 0}
-              style={{
-                ...ui.btnSecondary,
-                padding: "4px 9px",
-                fontSize: 11,
-                opacity: redoStack.length === 0 || isLockedPublished ? 0.45 : 1,
-              }}
-            >
-              ↪ Refazer ({redoStack.length})
-            </button>
-
-            <div
-              style={{
-                display: "inline-flex",
-                border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                borderRadius: 6,
-                overflow: "hidden",
-              }}
-            >
-              {[
-                ["compact", "Modo Compacto"],
-                ["detailed", "Modo Detalhado (+Horas)"],
-              ].map(([m, lbl]) => (
-                <button
-                  key={m}
-                  onClick={() => setViewDensity(m)}
-                  style={{
-                    padding: "4px 9px",
-                    fontSize: 10.5,
-                    fontWeight: 700,
-                    border: "none",
-                    cursor: "pointer",
-                    background: viewDensity === m ? "var(--uniao-blue, #2B5690)" : "var(--uniao-surface-subtle, #f8fafc)",
-                    color: viewDensity === m ? "#fff" : "var(--uniao-text-secondary, #475569)",
-                  }}
-                >
-                  {lbl}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Terceira Linha: Checkboxes de Transição e Legenda Clara */}
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginTop: 8,
-            paddingTop: 8,
-            borderTop: "1px solid var(--uniao-border, #f1f5f9)",
-            fontSize: 11,
-          }}
-        >
-          <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={showPrevMonthTail}
                 onChange={(e) => setShowPrevMonthTail(e.target.checked)}
               />
-              Exibir últimos 6 dias de <strong>{prevYearMonth}</strong> (Transição de Ciclo)
+              Exibir transição ({prevYearMonth})
             </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <input
                 type="checkbox"
                 checked={showVacantPositions}
                 onChange={(e) => setShowVacantPositions(e.target.checked)}
               />
-              Exibir Postos Vagos / Congelados
+              Exibir postos vagos / congelados
             </label>
           </div>
+        )}
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            <LegendItem bg="#f0fdf4" color="#15803d" text="T (Trabalhando)" />
-            <LegendItem bg="#2B5690" color="#fff" text="F (Folga Normal)" />
-            <LegendItem bg="#6d28d9" color="#fff" text="A (Folga Adicional)" />
-            <LegendItem bg="#fef3c7" color="#92400e" text="1/2 (Meio Expediente)" />
-            <LegendItem bg="#fee2e2" color="#991b1b" text="FECH (Mercado Fechado)" />
-            <LegendItem bg="#E9403C" color="#fff" text="FÉR / LM / INSS" />
-            <span style={{ color: "var(--uniao-text-secondary, #334155)", fontWeight: 600 }}>
-              🍽️ <strong>1..4 (Dom/Feriado):</strong> N01(09-10h) · N02(10-11h) · N03(11-12h) · N04(12-13h)
+        {brushModeActive && !isLockedPublished && (
+          <div
+            style={{
+              padding: "8px 10px",
+              borderRadius: 6,
+              background: "var(--erp-surface-subtle)",
+              border: "1px solid var(--erp-brand-blue-border)",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "var(--erp-brand-blue)" }}>
+                Pincel selecionado:
+              </span>
+              {BRUSH_TOOLS.map((tool) => {
+                const isSelected = activeBrush === tool.id;
+                return (
+                  <button
+                    key={tool.id}
+                    type="button"
+                    onClick={() => setActiveBrush(tool.id)}
+                    className={`erp-btn erp-btn--sm ${
+                      isSelected ? "erp-btn--primary" : "erp-btn--secondary"
+                    }`}
+                  >
+                    {tool.label}
+                  </button>
+                );
+              })}
+            </div>
+            <Button
+              variant="tertiary"
+              size="sm"
+              icon="x"
+              onClick={() => {
+                setBrushModeActive(false);
+                setActiveBrush("NONE");
+              }}
+            >
+              Sair do pincel
+            </Button>
+          </div>
+        )}
+
+        {legendOpen && (
+          <div
+            style={{
+              paddingTop: 8,
+              borderTop: "1px solid var(--erp-border)",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 12,
+              fontSize: 12,
+            }}
+          >
+            <LegendItem bg="#ffffff" color="#15803d" text="T · Trabalhando" />
+            <LegendItem bg="#2B5690" color="#ffffff" text="F · Folga normal" />
+            <LegendItem bg="#5B21B6" color="#ffffff" text="A · Folga adicional" />
+            <LegendItem bg="#fef3c7" color="#92400e" text="1/2 · Meio expediente" />
+            <LegendItem bg="#fee2e2" color="#991b1b" text="FECH · Mercado fechado" />
+            <LegendItem bg="#B91C1C" color="#ffffff" text="FÉR / LM / INSS" />
+            <span style={{ color: "var(--erp-ink-muted)" }}>
+              Faixas de almoço (Dom/Feriado): <strong>1</strong> (09–10h) ·{" "}
+              <strong>2</strong> (10–11h) · <strong>3</strong> (11–12h) ·{" "}
+              <strong>4</strong> (12–13h)
             </span>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* Painel de Propagação de Impacto Futuro (Seção 14) */}
       {impactReport && (
         <div
-          className="no-print"
-          style={{
-            background: "#fffbeb",
-            border: "2px solid #f59e0b",
-            borderRadius: 10,
-            padding: "12px 16px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
+          className="erp-alert erp-alert--warning no-print"
+          style={{ alignItems: "center", flexWrap: "wrap" }}
         >
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#b45309" }}>
-              ⚠️ Propagação de Impacto Temporal Detectada em {impactReport.nextYearMonth}
+            <div style={{ fontWeight: 700 }}>
+              Impacto temporal detectado em {impactReport.nextYearMonth}
             </div>
-            <div style={{ fontSize: 12, color: "#78350f", marginTop: 3 }}>
-              A alteração manual na escala de <strong>{impactReport.employeeName}</strong> em{" "}
-              {selectedYearMonth} altera o estado final do ciclo e impacta{" "}
-              <strong>{impactReport.differences.length} dia(s)</strong> em{" "}
-              {impactReport.nextYearMonth} (ex.:{" "}
+            <div style={{ fontSize: 12 }}>
+              O ajuste de <strong>{impactReport.employeeName}</strong> em {selectedYearMonth} altera{" "}
+              <strong>{impactReport.differences.length} dia(s)</strong> na competência seguinte (
               {impactReport.differences
                 .slice(0, 4)
-                .map((d) => `${d.workDate.slice(8, 10)}/${d.workDate.slice(5, 7)}: ${d.previousStatus}→${d.newProjectedStatus}`)
+                .map(
+                  (d) =>
+                    `${d.workDate.slice(8, 10)}/${d.workDate.slice(5, 7)}: ${d.previousStatus}→${d.newProjectedStatus}`
+                )
                 .join(", ")}
               ).
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleApplyImpactRecalculation} style={ui.btnPrimary}>
-              🔄 Recalcular {impactReport.nextYearMonth} (Preservar Manuais)
-            </button>
-            <button onClick={() => setImpactReport(null)} style={ui.btnSecondary}>
-              Manter {impactReport.nextYearMonth} Atual
-            </button>
+            <Button variant="primary" size="sm" onClick={handleApplyImpactRecalculation}>
+              Recalcular {impactReport.nextYearMonth}
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setImpactReport(null)}>
+              Manter como está
+            </Button>
           </div>
         </div>
       )}
 
-      {/* Grade Mensal Redesenhada: Colunas de Identificação Sticky à Esquerda + Rolagem Horizontal */}
+      {/* 3. GRADE CENTRAL DE ESCALAS — PRIORIDADE MÁXIMA DE ESPAÇO */}
       <div
+        className="erp-surface"
         style={{
-          background: "var(--uniao-card-bg, #fff)",
-          border: "1px solid var(--uniao-border-strong, #cbd5e1)",
-          borderRadius: 10,
           overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
         }}
       >
         <div
           style={{
-            background: "var(--uniao-top-strip, linear-gradient(90deg, #2B5690 0%, #2B5690 65%, #E9403C 100%))",
-            color: "#fff",
-            padding: "8px 14px",
-            fontWeight: 800,
-            fontSize: 12.5,
+            background: "var(--erp-surface-subtle)",
+            borderBottom: "1px solid var(--erp-border)",
+            padding: "6px 12px",
+            fontSize: 12,
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            flexWrap: "wrap",
             gap: 10,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <UniaoLogo variant="box_branco" size="sm" idSuffix="grid_hdr" />
-            <span>
-              EMPRESA: {db.companies[0]?.legalName} — CNPJ: {db.companies[0]?.cnpj}
+            <UniaoLogo variant="original" size="sm" idSuffix="grid_hdr" />
+            <span style={{ fontWeight: 600, color: "var(--erp-ink-secondary)" }}>
+              {db.companies[0]?.legalName} · CNPJ {db.companies[0]?.cnpj}
             </span>
           </div>
-          <span>
-            ESCALA MENSAL · {selectedYearMonth} · {selectedUnitId} (Versão #{currentMonthlySchedule.versionNumber || 1})
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="no-print" style={{ display: "inline-flex", gap: 6 }}>
+              <button
+                type="button"
+                onClick={expandAllSectors}
+                className="erp-btn erp-btn--tertiary erp-btn--sm"
+              >
+                Expandir todos
+              </button>
+              <button
+                type="button"
+                onClick={collapseAllSectors}
+                className="erp-btn erp-btn--tertiary erp-btn--sm"
+              >
+                Recolher todos
+              </button>
+            </span>
+            <strong style={{ color: "var(--erp-ink)" }}>
+              {activeUnitObj?.name || selectedUnitId} · {selectedYearMonth} · v
+              {currentMonthlySchedule.versionNumber || 1}
+            </strong>
+          </div>
         </div>
 
-        <div style={{ overflowX: "auto", maxWidth: "100%", position: "relative" }}>
-          {sectorsToRender.map(({ sector, rows }) => (
-            <table
-              key={sector.id}
-              style={{
-                borderCollapse: "separate",
-                borderSpacing: 0,
-                fontSize: viewDensity === "detailed" ? 11 : 10,
-                minWidth: "max-content",
-                width: "100%",
-              }}
-            >
-              <thead>
-                <tr style={{ background: "var(--uniao-table-header-sub, #1E3F6E)", color: "#fff" }}>
-                  {/* 4 Colunas Fixas (Sticky Left) de Identificação do Posto e Colaborador */}
-                  <th
-                    style={{
-                      ...ui.thSticky,
-                      left: 0,
-                      width: 52,
-                      minWidth: 52,
-                      background: "var(--uniao-table-header-bg, #2B5690)",
-                    }}
-                  >
-                    Nº
-                  </th>
-                  <th
-                    style={{
-                      ...ui.thSticky,
-                      left: 52,
-                      width: 155,
-                      minWidth: 155,
-                      textAlign: "left",
-                      background: "var(--uniao-table-header-bg, #2B5690)",
-                    }}
-                  >
-                    {sector.name}
-                  </th>
-                  <th
-                    style={{
-                      ...ui.thSticky,
-                      left: 207,
-                      width: 160,
-                      minWidth: 160,
-                      textAlign: "left",
-                      background: "var(--uniao-table-header-bg, #2B5690)",
-                    }}
-                  >
-                    COLABORADOR / VAGA
-                  </th>
-                  <th
-                    style={{
-                      ...ui.thSticky,
-                      left: 367,
-                      width: viewDensity === "detailed" ? 145 : 112,
-                      minWidth: viewDensity === "detailed" ? 145 : 112,
-                      background: "var(--uniao-table-header-bg, #2B5690)",
-                      borderRight: "2px solid var(--uniao-sticky-accent, #E9403C)",
-                    }}
-                  >
-                    HORÁRIO / REGRA
-                  </th>
+        <div
+          style={{
+            overflow: "auto",
+            maxWidth: "100%",
+            maxHeight: isExpandedFullscreen ? "calc(100vh - 160px)" : "calc(100vh - 250px)",
+            position: "relative",
+          }}
+        >
+          <table
+            style={{
+              borderCollapse: "separate",
+              borderSpacing: 0,
+              fontSize: viewDensity === "detailed" ? 12 : 11.5,
+              minWidth: "max-content",
+              width: "100%",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            <thead>
+              <tr>
+                <th
+                  style={{
+                    ...ui.thSticky,
+                    top: 0,
+                    left: 0,
+                    zIndex: 30,
+                    width: 52,
+                    minWidth: 52,
+                    background: "#1B3963",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  Posto
+                </th>
+                <th
+                  style={{
+                    ...ui.thSticky,
+                    top: 0,
+                    left: 52,
+                    zIndex: 30,
+                    width: 158,
+                    minWidth: 158,
+                    textAlign: "left",
+                    background: "#1B3963",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  Função / Cargo
+                </th>
+                <th
+                  style={{
+                    ...ui.thSticky,
+                    top: 0,
+                    left: 210,
+                    zIndex: 30,
+                    width: 170,
+                    minWidth: 170,
+                    textAlign: "left",
+                    background: "#1B3963",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  Colaborador / Vaga
+                </th>
+                <th
+                  style={{
+                    ...ui.thSticky,
+                    top: 0,
+                    left: 380,
+                    zIndex: 30,
+                    width: viewDensity === "detailed" ? 148 : 118,
+                    minWidth: viewDensity === "detailed" ? 148 : 118,
+                    background: "#1B3963",
+                    color: "#FFFFFF",
+                    borderRight: "2px solid #2B5690",
+                  }}
+                >
+                  Jornada · Regra
+                </th>
 
-                  {/* Últimos 6 dias do Mês Anterior (Com Separador Visual Forte à Direita) */}
-                  {showPrevMonthTail &&
-                    prevTailDates.map((d, idx) => {
-                      const dow = getDayOfWeekISO(d);
-                      const isLastTail = idx === prevTailDates.length - 1;
-                      return (
-                        <th
-                          key={d}
-                          style={{
-                            ...ui.thGrid,
-                            width: dayColWidth,
-                            minWidth: dayColWidth,
-                            background: "#1B3963",
-                            color: "#DCE8F7",
-                            borderRight: isLastTail ? "3px solid #E9403C" : "1px solid #3A69A8",
-                          }}
-                          title={`Transição Mês Anterior: ${d}`}
-                        >
-                          <div style={{ fontSize: 8 }}>{DIAS_SEMANA_CURTO[dow]}</div>
-                          <div style={{ fontSize: 9.5 }}>{Number(d.slice(8, 10))}</div>
-                        </th>
-                      );
-                    })}
-
-                  {/* Dias do Mês Atual */}
-                  {monthDates.map((d) => {
+                {showPrevMonthTail &&
+                  prevTailDates.map((d, idx) => {
                     const dow = getDayOfWeekISO(d);
-                    const mDay = marketCalendarByDate[d];
-                    const isWeekend = dow === 0 || dow === 6;
-                    const bgHeader =
-                      mDay?.openingMode === "CLOSED"
-                        ? "#E9403C"
-                        : mDay?.openingMode === "HALF_DAY"
-                          ? "#b45309"
-                          : mDay
-                            ? "#2B5690"
-                            : isWeekend
-                              ? "#224678"
-                              : "#EBF2FA";
-                    const colorHeader = mDay || isWeekend ? "#fff" : "#142B4D";
-
+                    const isLastTail = idx === prevTailDates.length - 1;
                     return (
                       <th
                         key={d}
                         style={{
                           ...ui.thGrid,
+                          position: "sticky",
+                          top: 0,
+                          zIndex: 20,
                           width: dayColWidth,
                           minWidth: dayColWidth,
-                          background: bgHeader,
-                          color: colorHeader,
+                          background: "#E2E8F0",
+                          color: "#475569",
+                          borderRight: isLastTail ? "2px solid #2B5690" : "1px solid #CBD5E1",
                         }}
-                        title={
-                          mDay
-                            ? `${mDay.description} (${mDay.openingMode})`
-                            : `${DIAS_SEMANA_CURTO[dow]}, ${d}`
-                        }
+                        title={`Transição competência anterior: ${d}`}
                       >
-                        <div style={{ fontSize: 8 }}>{DIAS_SEMANA_CURTO[dow]}</div>
-                        <div style={{ fontSize: 10, fontWeight: 800 }}>
-                          {Number(d.slice(8, 10))}
-                        </div>
+                        <div style={{ fontSize: 10 }}>{DIAS_SEMANA_CURTO[dow]}</div>
+                        <div style={{ fontSize: 11, fontWeight: 700 }}>{Number(d.slice(8, 10))}</div>
                       </th>
                     );
                   })}
 
-                  <th
-                    style={{
-                      ...ui.thGrid,
-                      width: 96,
-                      minWidth: 96,
-                      background: "var(--uniao-table-header-bg, #2B5690)",
-                    }}
-                  >
-                    PRÓX. MÊS
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(({ pos, emp, shift, rule, workloadSummary }) => {
-                  const isVacant = !emp;
-                  const posMeta = STATUS_VAGA_META[pos.status] || STATUS_VAGA_META.OPEN_UNPLANNED;
-                  const stickyRowBg = isVacant ? "#f1f5f9" : "#ffffff";
+                {monthDates.map((d) => {
+                  const dow = getDayOfWeekISO(d);
+                  const mDay = marketCalendarByDate[d];
+                  const isSunday = dow === 0;
+                  const isSaturday = dow === 6;
+                  const bgHeader =
+                    mDay?.openingMode === "CLOSED"
+                      ? "#FEE2E2"
+                      : mDay?.openingMode === "HALF_DAY"
+                        ? "#FEF3C7"
+                        : mDay || isSunday
+                          ? "#DBEAFE"
+                          : isSaturday
+                            ? "#EEF2F6"
+                            : "#F8FAFC";
+                  const colorHeader =
+                    mDay?.openingMode === "CLOSED"
+                      ? "#991B1B"
+                      : mDay?.openingMode === "HALF_DAY"
+                        ? "#92400E"
+                        : mDay || isSunday
+                          ? "#1E3A8A"
+                          : "#1E293B";
 
                   return (
-                    <tr key={pos.id} style={{ background: stickyRowBg }}>
-                      {/* Coluna 1 Fixa: Código do Posto */}
-                      <td
-                        style={{
-                          ...ui.tdSticky,
-                          left: 0,
-                          width: 52,
-                          minWidth: 52,
-                          background: stickyRowBg,
-                          textAlign: "center",
-                          fontWeight: 800,
-                          fontSize: 9.5,
-                          color: pos.isSharedRateio ? "#6b21a8" : "#142B4D",
-                        }}
-                      >
-                        {pos.isSharedRateio ? "RATEIO" : pos.code}
-                      </td>
-
-                      {/* Coluna 2 Fixa: Função / Posto */}
-                      <td
-                        style={{
-                          ...ui.tdSticky,
-                          left: 52,
-                          width: 155,
-                          minWidth: 155,
-                          background: stickyRowBg,
-                          color: "#142B4D",
-                          fontWeight: 600,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={pos.notes || pos.title}
-                      >
-                        {pos.title}
-                      </td>
-
-                      {/* Coluna 3 Fixa: Nome do Colaborador ou Vaga */}
-                      <td
-                        style={{
-                          ...ui.tdSticky,
-                          left: 207,
-                          width: 160,
-                          minWidth: 160,
-                          background: isVacant ? posMeta.bg : "#fff",
-                          color: isVacant ? posMeta.cor : "#142B4D",
-                          fontWeight: 700,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                        title={pos.notes || emp?.fullName || posMeta.label}
-                      >
-                        {emp ? emp.fullName : `VAGA (${posMeta.label.toUpperCase()})`}
-                      </td>
-
-                      {/* Coluna 4 Fixa: Horário + Regra + Resumo de Carga no Modo Detalhado */}
-                      <td
-                        style={{
-                          ...ui.tdSticky,
-                          left: 367,
-                          width: viewDensity === "detailed" ? 145 : 112,
-                          minWidth: viewDensity === "detailed" ? 145 : 112,
-                          background: stickyRowBg,
-                          textAlign: "center",
-                          fontSize: 9,
-                          borderRight: "2px solid var(--uniao-sticky-accent, #E9403C)",
-                        }}
-                      >
-                        <div style={{ fontWeight: 700, color: "#2B5690" }}>
-                          {rule?.code || "—"} ·{" "}
-                          <span style={{ color: "#334155", fontWeight: 600 }}>
-                            {shift ? `${shift.entryTime}-${shift.effectiveExitTime}` : "—"}
-                          </span>
-                        </div>
-                        {viewDensity === "detailed" && workloadSummary && (
-                          <div style={{ fontSize: 8.5, color: "#475569", marginTop: 1 }}>
-                            {workloadSummary.workedDaysCount}d trab ·{" "}
-                            <strong>{workloadSummary.totalEffectiveFormatted}h</strong>
-                          </div>
-                        )}
-                      </td>
-
-                      {/* Últimos 6 dias do Mês Anterior */}
-                      {showPrevMonthTail &&
-                        prevTailDates.map((d, idx) => {
-                          const isLastTail = idx === prevTailDates.length - 1;
-                          if (isVacant) {
-                            return (
-                              <td
-                                key={d}
-                                style={{
-                                  ...ui.tdGrid,
-                                  background: "#e2e8f0",
-                                  borderRight: isLastTail
-                                    ? "3px solid #E9403C"
-                                    : "1px solid #cbd5e1",
-                                }}
-                              />
-                            );
-                          }
-                          const prevEntry = entriesByEmpDate[emp.id]?.[d];
-                          const st = prevEntry?.status || "T";
-                          return (
-                            <td
-                              key={d}
-                              style={{
-                                ...ui.tdGrid,
-                                textAlign: "center",
-                                background:
-                                  st === "F"
-                                    ? "#2B5690"
-                                    : st === "V"
-                                      ? "#E9403C"
-                                      : "#f8fafc",
-                                color: st === "F" || st === "V" ? "#fff" : "#64748b",
-                                fontSize: 9,
-                                fontWeight: 700,
-                                borderRight: isLastTail
-                                  ? "3px solid #E9403C"
-                                  : "1px solid #cbd5e1",
-                              }}
-                              title={`Mês Anterior (${d}): ${st}`}
-                            >
-                              {st === "F" ? "F" : st === "V" ? "FÉR" : prevEntry?.lunchSlot || "T"}
-                            </td>
-                          );
-                        })}
-
-                      {/* Dias do Mês Selecionado */}
-                      {monthDates.map((d) => {
-                        if (isVacant) {
-                          return <td key={d} style={{ ...ui.tdGrid, background: "#e2e8f0" }} />;
-                        }
-
-                        const entry = entriesByEmpDate[emp.id]?.[d];
-                        const st = entry?.status || "T";
-                        const dow = getDayOfWeekISO(d);
-                        const mDay = marketCalendarByDate[d];
-                        const isSunOrHoliday = dow === 0 || Boolean(mDay);
-                        const isManual = entry?.origin === "MANUAL_OVERRIDE";
-
-                        let cellBg = "#ffffff";
-                        let cellColor = "#15803d";
-                        let mainBadge = viewDensity === "detailed" ? "T" : "";
-
-                        if (st === "F") {
-                          cellBg = "#2B5690";
-                          cellColor = "#ffffff";
-                          mainBadge = "F";
-                        } else if (st === "A") {
-                          cellBg = "#6d28d9";
-                          cellColor = "#ffffff";
-                          mainBadge = "A";
-                        } else if (st === "FECHADO") {
-                          cellBg = "#fee2e2";
-                          cellColor = "#991b1b";
-                          mainBadge = "FECH";
-                        } else if (st === "MEIO_EXP") {
-                          cellBg = "#fef3c7";
-                          cellColor = "#92400e";
-                          mainBadge = "1/2";
-                        } else if (st === "V") {
-                          cellBg = "#E9403C";
-                          cellColor = "#ffffff";
-                          mainBadge = "FÉR";
-                        } else if (st === "LM" || st === "INSS") {
-                          cellBg = "#7e22ce";
-                          cellColor = "#ffffff";
-                          mainBadge = st;
-                        } else if (st === "ADM" || st === "DEM") {
-                          cellBg = "#cbd5e1";
-                          cellColor = "#475569";
-                          mainBadge = st;
-                        } else if (st === "EMPTY") {
-                          cellBg = "#fff1f2";
-                          cellColor = "#be123c";
-                          mainBadge = "—";
-                        } else if (st === "T" && isSunOrHoliday) {
-                          cellBg = "#dcfce7";
-                          cellColor = "#166534";
-                        }
-
-                        const showLunchTag =
-                          (st === "T" || st === "MEIO_EXP") && isSunOrHoliday && entry?.lunchSlot;
-
-                        return (
-                          <td
-                            key={d}
-                            onMouseDown={(ev) => {
-                              if (ev.button !== 0) return;
-                              if (activeBrush !== "NONE") setIsMousePainting(true);
-                              handleCellInteraction(emp, pos, d, ev, false);
-                            }}
-                            onMouseEnter={(ev) => {
-                              if (isMousePainting && activeBrush !== "NONE") {
-                                handleCellInteraction(emp, pos, d, ev, true);
-                              }
-                            }}
-                            style={{
-                              ...ui.tdGrid,
-                              width: dayColWidth,
-                              minWidth: dayColWidth,
-                              height: viewDensity === "detailed" ? 28 : 23,
-                              background: cellBg,
-                              color: cellColor,
-                              textAlign: "center",
-                              fontWeight: 800,
-                              fontSize: viewDensity === "detailed" ? 10 : 9,
-                              cursor: isLockedPublished ? "not-allowed" : "pointer",
-                              position: "relative",
-                              boxShadow: isManual ? "inset 0 0 0 1.5px #E9403C" : "none",
-                              userSelect: "none",
-                            }}
-                            title={`${emp.fullName} — Dia ${d.slice(8, 10)}/${d.slice(5, 7)} (${DIAS_SEMANA_CURTO[dow]}): Status=${st} | Origem=${entry?.origin || "AUTO"}${
-                              entry?.lunchSlot
-                                ? ` | Almoço: ${FAIXAS_ALMOCO_DOMINGO[entry.lunchSlot]?.horario}`
-                                : ""
-                            }`}
-                          >
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: 2,
-                              }}
-                            >
-                              <span>{mainBadge}</span>
-                              {showLunchTag && (
-                                <span
-                                  style={{
-                                    background: st === "MEIO_EXP" ? "#92400e" : "#15803d",
-                                    color: "#fff",
-                                    borderRadius: 3,
-                                    padding: "0 3px",
-                                    fontSize: 8.5,
-                                    fontWeight: 800,
-                                    lineHeight: "13px",
-                                  }}
-                                >
-                                  {entry.lunchSlot}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        );
-                      })}
-
-                      {/* Coluna Direita: Projeção de Folga na Virada para o Mês Seguinte */}
-                      <td
-                        style={{
-                          ...ui.tdGrid,
-                          fontSize: 9,
-                          fontWeight: 700,
-                          textAlign: "center",
-                          color: "#2B5690",
-                          background: "#EBF2FA",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {emp ? getNextMonthFirstRestLabel(emp) : "—"}
-                      </td>
-                    </tr>
+                    <th
+                      key={d}
+                      style={{
+                        ...ui.thGrid,
+                        position: "sticky",
+                        top: 0,
+                        zIndex: 20,
+                        width: dayColWidth,
+                        minWidth: dayColWidth,
+                        background: bgHeader,
+                        color: colorHeader,
+                      }}
+                      title={
+                        mDay
+                          ? `${mDay.description} (${mDay.openingMode})`
+                          : `${DIAS_SEMANA_CURTO[dow]}, ${d}`
+                      }
+                    >
+                      <div style={{ fontSize: 10, fontWeight: 600 }}>{DIAS_SEMANA_CURTO[dow]}</div>
+                      <div style={{ fontSize: 11.5, fontWeight: 700 }}>{Number(d.slice(8, 10))}</div>
+                    </th>
                   );
                 })}
-              </tbody>
-            </table>
-          ))}
+
+                <th
+                  style={{
+                    ...ui.thGrid,
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 20,
+                    width: 98,
+                    minWidth: 98,
+                    background: "#1B3963",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  Próx. folga
+                </th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {sectorsToRender.map(({ sector, rows }) => {
+                const isCollapsed = collapsedSectorIds.has(sector.id);
+                const filledCount = rows.filter((r) => Boolean(r.emp)).length;
+                const sectorErrors = rows.reduce((acc, r) => {
+                  if (!r.emp) return acc;
+                  const empMap = conflictsByEmpDate[r.emp.id] || {};
+                  return acc + Object.values(empMap).flat().length;
+                }, 0);
+
+                return (
+                  <Fragment key={sector.id}>
+                    <tr data-sector-header="true">
+                      <td
+                        colSpan={4}
+                        onClick={() => toggleSectorCollapse(sector.id)}
+                        style={{
+                          position: "sticky",
+                          left: 0,
+                          zIndex: 14,
+                          padding: "6px 10px",
+                          background: "#EEF2F7",
+                          borderBottom: "1px solid #CBD5E1",
+                          borderRight: "2px solid #2B5690",
+                          cursor: "pointer",
+                          fontWeight: 700,
+                          fontSize: 12,
+                          color: "#0F1E36",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            <Icon name={isCollapsed ? "chevronRight" : "chevronDown"} size={14} />
+                            <span>{sector.name}</span>
+                          </span>
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 6,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              color: "#475569",
+                            }}
+                          >
+                            <span>
+                              {filledCount}/{rows.length} ocupados
+                            </span>
+                            {sectorErrors > 0 && (
+                              <span
+                                style={{
+                                  background: "#FEE2E2",
+                                  color: "#B91C1C",
+                                  padding: "1px 6px",
+                                  borderRadius: 4,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {sectorErrors} alerta(s)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      </td>
+                      <td
+                        colSpan={totalDayCols + 1}
+                        onClick={() => toggleSectorCollapse(sector.id)}
+                        style={{
+                          background: "#F4F7FA",
+                          borderBottom: "1px solid #CBD5E1",
+                          cursor: "pointer",
+                          padding: "4px 10px",
+                          fontSize: 11,
+                          color: "#64748B",
+                        }}
+                      >
+                        {isCollapsed
+                          ? `Setor recolhido (${rows.length} postos) — clique para expandir`
+                          : `Cobertura mínima diária: ${sector.minDailyCoverage || 1} colaborador(es)`}
+                      </td>
+                    </tr>
+
+                    {!isCollapsed &&
+                      rows.map(({ pos, emp, shift, rule, workloadSummary }) => {
+                        const isVacant = !emp;
+                        const posMeta =
+                          STATUS_VAGA_META[pos.status] || STATUS_VAGA_META.OPEN_UNPLANNED;
+                        const stickyRowBg = isVacant ? "#F8FAFC" : "#FFFFFF";
+
+                        return (
+                          <tr key={pos.id} style={{ background: stickyRowBg }}>
+                            <td
+                              style={{
+                                ...ui.tdSticky,
+                                left: 0,
+                                width: 52,
+                                minWidth: 52,
+                                background: stickyRowBg,
+                                textAlign: "center",
+                                fontWeight: 700,
+                                fontSize: 11,
+                                color: pos.isSharedRateio ? "#6D28D9" : "#1E293B",
+                              }}
+                            >
+                              {pos.isSharedRateio ? "RAT" : pos.code}
+                            </td>
+
+                            <td
+                              style={{
+                                ...ui.tdSticky,
+                                left: 52,
+                                width: 158,
+                                minWidth: 158,
+                                background: stickyRowBg,
+                                color: "#334155",
+                                fontWeight: 500,
+                                fontSize: 11.5,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                              title={pos.notes || pos.title}
+                            >
+                              {pos.title}
+                            </td>
+
+                            <td
+                              style={{
+                                ...ui.tdSticky,
+                                left: 210,
+                                width: 170,
+                                minWidth: 170,
+                                background: isVacant ? posMeta.bg : "#FFFFFF",
+                                color: isVacant ? posMeta.cor : "#0F1E36",
+                                fontWeight: 600,
+                                fontSize: 12,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                              title={pos.notes || emp?.fullName || posMeta.label}
+                            >
+                              {emp ? emp.fullName : `VAGA (${posMeta.label})`}
+                            </td>
+
+                            <td
+                              style={{
+                                ...ui.tdSticky,
+                                left: 380,
+                                width: viewDensity === "detailed" ? 148 : 118,
+                                minWidth: viewDensity === "detailed" ? 148 : 118,
+                                background: stickyRowBg,
+                                textAlign: "center",
+                                fontSize: 11,
+                                borderRight: "2px solid #2B5690",
+                              }}
+                            >
+                              <div style={{ fontWeight: 700, color: "#2B5690" }}>
+                                {rule?.code || "—"} ·{" "}
+                                <span style={{ color: "#475569", fontWeight: 500 }}>
+                                  {shift ? `${shift.entryTime}-${shift.effectiveExitTime}` : "—"}
+                                </span>
+                              </div>
+                              {viewDensity === "detailed" && workloadSummary && (
+                                <div style={{ fontSize: 10.5, color: "#64748B", marginTop: 1 }}>
+                                  {workloadSummary.workedDaysCount}d ·{" "}
+                                  <strong>{workloadSummary.totalEffectiveFormatted}h</strong>
+                                </div>
+                              )}
+                            </td>
+
+                            {showPrevMonthTail &&
+                              prevTailDates.map((d, idx) => {
+                                const isLastTail = idx === prevTailDates.length - 1;
+                                if (isVacant) {
+                                  return (
+                                    <td
+                                      key={d}
+                                      style={{
+                                        ...ui.tdGrid,
+                                        background: "#F1F5F9",
+                                        borderRight: isLastTail
+                                          ? "2px solid #2B5690"
+                                          : "1px solid #E2E8F0",
+                                      }}
+                                    />
+                                  );
+                                }
+                                const prevEntry = entriesByEmpDate[emp.id]?.[d];
+                                const st = prevEntry?.status || "T";
+                                return (
+                                  <td
+                                    key={d}
+                                    style={{
+                                      ...ui.tdGrid,
+                                      textAlign: "center",
+                                      background:
+                                        st === "F"
+                                          ? "#DBEAFE"
+                                          : st === "V"
+                                            ? "#FEE2E2"
+                                            : "#F8FAFC",
+                                      color:
+                                        st === "F"
+                                          ? "#1E40AF"
+                                          : st === "V"
+                                            ? "#991B1B"
+                                            : "#64748B",
+                                      fontSize: 10.5,
+                                      fontWeight: 600,
+                                      borderRight: isLastTail
+                                        ? "2px solid #2B5690"
+                                        : "1px solid #E2E8F0",
+                                    }}
+                                    title={`Competência anterior (${d}): ${st}`}
+                                  >
+                                    {st === "F" ? "F" : st === "V" ? "FÉR" : prevEntry?.lunchSlot || "T"}
+                                  </td>
+                                );
+                              })}
+
+                            {monthDates.map((d) => {
+                              if (isVacant) {
+                                return <td key={d} style={{ ...ui.tdGrid, background: "#F1F5F9" }} />;
+                              }
+
+                              const entry = entriesByEmpDate[emp.id]?.[d];
+                              const st = entry?.status || "T";
+                              const dow = getDayOfWeekISO(d);
+                              const mDay = marketCalendarByDate[d];
+                              const isSunOrHoliday = dow === 0 || Boolean(mDay);
+                              const isManual = entry?.origin === "MANUAL_OVERRIDE";
+                              const cellConflicts = conflictsByEmpDate[emp.id]?.[d] || [];
+                              const hasBlockingErr = cellConflicts.some(
+                                (c) => c.severity === "ERROR" || c.blocking
+                              );
+
+                              let cellBg = isSunOrHoliday ? "#F8FAFC" : "#FFFFFF";
+                              let cellColor = "#15803D";
+                              let mainBadge = viewDensity === "detailed" ? "T" : "";
+
+                              if (st === "F") {
+                                cellBg = "#2B5690";
+                                cellColor = "#FFFFFF";
+                                mainBadge = "F";
+                              } else if (st === "A") {
+                                cellBg = "#5B21B6";
+                                cellColor = "#FFFFFF";
+                                mainBadge = "A";
+                              } else if (st === "FECHADO") {
+                                cellBg = "#FEE2E2";
+                                cellColor = "#991B1B";
+                                mainBadge = "FECH";
+                              } else if (st === "MEIO_EXP") {
+                                cellBg = "#FEF3C7";
+                                cellColor = "#92400E";
+                                mainBadge = "1/2";
+                              } else if (st === "V") {
+                                cellBg = "#B91C1C";
+                                cellColor = "#FFFFFF";
+                                mainBadge = "FÉR";
+                              } else if (st === "LM" || st === "INSS") {
+                                cellBg = "#6D28D9";
+                                cellColor = "#FFFFFF";
+                                mainBadge = st;
+                              } else if (st === "ADM" || st === "DEM") {
+                                cellBg = "#E2E8F0";
+                                cellColor = "#475569";
+                                mainBadge = st;
+                              } else if (st === "EMPTY") {
+                                cellBg = "#FFF1F2";
+                                cellColor = "#BE123C";
+                                mainBadge = "—";
+                              } else if (st === "T" && isSunOrHoliday) {
+                                cellBg = "#ECFDF5";
+                                cellColor = "#166534";
+                              }
+
+                              const showLunchTag =
+                                (st === "T" || st === "MEIO_EXP") &&
+                                isSunOrHoliday &&
+                                entry?.lunchSlot;
+
+                              const conflictText =
+                                cellConflicts.length > 0
+                                  ? ` | Alertas: ${cellConflicts
+                                      .map((c) => c.message || c.type)
+                                      .join("; ")}`
+                                  : "";
+
+                              return (
+                                <td
+                                  key={d}
+                                  tabIndex={isLockedPublished ? -1 : 0}
+                                  onKeyDown={(ev) => handleGridCellKeyDown(ev, emp, pos, d)}
+                                  onMouseDown={(ev) => {
+                                    if (ev.button !== 0) return;
+                                    if (activeBrush !== "NONE") setIsMousePainting(true);
+                                    handleCellInteraction(emp, pos, d, ev, false);
+                                  }}
+                                  onMouseEnter={(ev) => {
+                                    if (isMousePainting && activeBrush !== "NONE") {
+                                      handleCellInteraction(emp, pos, d, ev, true);
+                                    }
+                                  }}
+                                  style={{
+                                    ...ui.tdGrid,
+                                    width: dayColWidth,
+                                    minWidth: dayColWidth,
+                                    height: viewDensity === "detailed" ? 30 : 25,
+                                    background: cellBg,
+                                    color: cellColor,
+                                    textAlign: "center",
+                                    fontWeight: 700,
+                                    fontSize: 11,
+                                    cursor: isLockedPublished ? "not-allowed" : "pointer",
+                                    position: "relative",
+                                    boxShadow:
+                                      cellConflicts.length > 0
+                                        ? `inset 0 0 0 2px ${
+                                            hasBlockingErr ? "#DC2626" : "#D97706"
+                                          }`
+                                        : isManual
+                                          ? "inset 0 -2px 0 0 #2B5690"
+                                          : "none",
+                                    userSelect: "none",
+                                  }}
+                                  title={`${emp.fullName} — ${d.slice(8, 10)}/${d.slice(5, 7)} (${
+                                    DIAS_SEMANA_CURTO[dow]
+                                  }): ${st}${
+                                    entry?.lunchSlot
+                                      ? ` | Almoço ${FAIXAS_ALMOCO_DOMINGO[entry.lunchSlot]?.horario}`
+                                      : ""
+                                  }${isManual ? " | Ajuste manual" : ""}${conflictText}`}
+                                >
+                                  {cellConflicts.length > 0 && (
+                                    <span
+                                      aria-hidden="true"
+                                      style={{
+                                        position: "absolute",
+                                        top: 0,
+                                        right: 0,
+                                        width: 0,
+                                        height: 0,
+                                        borderStyle: "solid",
+                                        borderWidth: "0 7px 7px 0",
+                                        borderColor: `transparent ${
+                                          hasBlockingErr ? "#DC2626" : "#D97706"
+                                        } transparent transparent`,
+                                      }}
+                                    />
+                                  )}
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      gap: 2,
+                                    }}
+                                  >
+                                    <span>{mainBadge}</span>
+                                    {showLunchTag && (
+                                      <span
+                                        style={{
+                                          background: st === "MEIO_EXP" ? "#92400E" : "#15803D",
+                                          color: "#FFFFFF",
+                                          borderRadius: 2,
+                                          padding: "0 3px",
+                                          fontSize: 9.5,
+                                          fontWeight: 700,
+                                          lineHeight: "14px",
+                                        }}
+                                      >
+                                        {entry.lunchSlot}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                              );
+                            })}
+
+                            <td
+                              style={{
+                                ...ui.tdGrid,
+                                fontSize: 10.5,
+                                fontWeight: 600,
+                                textAlign: "center",
+                                color: "#1E3A8A",
+                                background: "#F8FAFC",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {emp ? getNextMonthFirstRestLabel(emp) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
 
         {/* Rodapé Oficial da Planilha: Escala de Intervalos e Contagem de Quadro */}

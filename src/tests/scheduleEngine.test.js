@@ -22,8 +22,6 @@ import {
   verifyScheduleConflicts,
   validateMonthlyScheduleChecklist,
   getActiveAllocationOnDate,
-  getEffectiveRuleForDate,
-  getUnavailabilityOnDate,
   computeDynamicEmploymentStatus,
   calculateShiftMetrics,
   checkInterjornadaRest,
@@ -1655,19 +1653,12 @@ test("Cenário 40 (BUG-008): computeDynamicEmploymentStatus e ocupação de vaga
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CENÁRIO 41 (BUG-009) — BLOQUEIO DE ESCALONAMENTO DE PRIVILÉGIO RBAC NO LOGIN E SIMULADOR
+// CENÁRIO 41 (BUG-009 / v9.0) — BLOQUEIO DE ESCALONAMENTO DE PRIVILÉGIO E SIMULADOR RESTRITO A MASTER
 // ─────────────────────────────────────────────────────────────────────────────
-test("Cenário 41 (BUG-009): canSimulateRbacRole restringe simulador RBAC a sessões ADMIN e resolveAuthenticatedOperatorSession impede auto-promoção de VIEWER cadastrado", () => {
-  assert.equal(
-    canSimulateRbacRole({ roleProfile: "VIEWER" }),
-    false,
-    "Sessão original VIEWER não pode desbloquear o simulador RBAC para promover-se a ADMIN"
-  );
-  assert.equal(
-    canSimulateRbacRole({ roleProfile: "ADMIN" }),
-    true,
-    "Sessão original ADMIN possui permissão para simular outros perfis RBAC"
-  );
+test("Cenário 41 (BUG-009): canSimulateRbacRole restringe pré-visualização RBAC ao MASTER e resolveAuthenticatedOperatorSession exige conta provisionada e autenticação de servidor", () => {
+  assert.equal(canSimulateRbacRole({ roleProfile: "VIEWER" }), false);
+  assert.equal(canSimulateRbacRole({ roleProfile: "ADMIN" }), false);
+  assert.equal(canSimulateRbacRole({ roleProfile: "MASTER" }), true);
 
   const userProfiles = [
     {
@@ -1676,24 +1667,18 @@ test("Cenário 41 (BUG-009): canSimulateRbacRole restringe simulador RBAC a sess
       fullName: "Auditor Externo",
       roleProfile: "VIEWER",
       authorizedUnits: ["LOJA_03"],
-      active: true,
+      status: "ACTIVE",
     },
   ];
 
-  // Tentativa de login tentando solicitar role ADMIN com e-mail cadastrado como VIEWER
   const resolved = resolveAuthenticatedOperatorSession({
     email: "auditor@uniaosupermercados.com.br",
-    fullName: "Auditor Externo",
-    requestedRole: "ADMIN",
+    requestedRole: "MASTER",
     userProfiles,
-    units: [{ id: "LOJA_03" }, { id: "LOJA_01" }],
+    authVerificationStatus: "VERIFIED_SUPABASE_AUTH",
   });
 
-  assert.equal(
-    resolved.roleProfile,
-    "VIEWER",
-    "Operador cadastrado como VIEWER não pode escalar seu privilégio para ADMIN no formulário de login"
-  );
+  assert.equal(resolved.roleProfile, "VIEWER");
   assert.deepEqual(resolved.authorizedUnits, ["LOJA_03"]);
 });
 
@@ -2110,7 +2095,7 @@ test("Cenário 49: Temas e Manual de Marca União Supermercados aplicam cores RG
 
   const ui = createUniaoModuleUi();
   assert.ok(ui.card.fontFamily.includes("Montserrat"));
-  assert.ok(ui.btnPrimary.background.includes("#E9403C"));
+  assert.ok(ui.btnPrimary.background.includes("#2B5690"), "Ação primária usa Azul União estratégico");
 
   const db = buildInitialErpDatabase();
   const lj03 = db.units.find((u) => u.id === "LOJA_03");
@@ -2122,39 +2107,32 @@ test("Cenário 49: Temas e Manual de Marca União Supermercados aplicam cores RG
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CENÁRIO 50 — CRIAÇÃO DE CONTA E LOGIN POR SENHA SEM "FAILED TO FETCH" OFFLINE
+// CENÁRIO 50 (v9.0) — BLOQUEIO DEFINITIVO DE CADASTRO PÚBLICO E FALLBACK LOCAL DE SENHA
 // ─────────────────────────────────────────────────────────────────────────────
-test("Cenário 50: Criação de conta (registerOperatorAccount) e login por senha (authenticateOperatorWithPassword) funcionam sem erro Failed to fetch mesmo com servidor remoto offline", async () => {
+test("Cenário 50: Cadastro público (registerOperatorAccount) e autenticação por fallback local (authenticateOperatorWithPassword) são bloqueados por segurança", async () => {
   const {
     registerOperatorAccount,
     authenticateOperatorWithPassword,
-    removeLocalAuthAccount,
   } = await import("../services/erpRepository.js");
 
-  const db = buildInitialErpDatabase();
-  const created = await registerOperatorAccount({
-    email: "novo.gestor@uniaosupermercados.com.br",
-    password: " Uniao@2026 ",
-    fullName: "Novo Gestor União",
-    roleProfile: "MANAGER",
-    units: db.units,
-    userProfiles: db.userProfiles,
-  });
+  await assert.rejects(
+    () =>
+      registerOperatorAccount({
+        email: "novo.gestor@exemplo.invalid",
+        password: "qualquer",
+        roleProfile: "ADMIN",
+      }),
+    /PUBLIC_SIGNUP_DISABLED/
+  );
 
-  assert.equal(created.userProfile.email, "novo.gestor@uniaosupermercados.com.br");
-  assert.equal(created.userProfile.fullName, "Novo Gestor União");
-  assert.equal(created.sessionPayload.roleProfile, "MANAGER");
-
-  const loggedSession = await authenticateOperatorWithPassword({
-    email: "novo.gestor@uniaosupermercados.com.br",
-    password: " Uniao@2026 ",
-    userProfiles: [...db.userProfiles, created.userProfile],
-    units: db.units,
-  });
-  assert.equal(loggedSession.user.email, "novo.gestor@uniaosupermercados.com.br");
-  assert.equal(loggedSession.roleProfile, "MANAGER");
-
-  removeLocalAuthAccount("novo.gestor@uniaosupermercados.com.br");
+  await assert.rejects(
+    () =>
+      authenticateOperatorWithPassword({
+        email: "novo.gestor@exemplo.invalid",
+        password: "qualquer",
+      }),
+    /LOCAL_AUTH_REMOVED/
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -579,7 +579,6 @@ export function generateEmployeeScheduleForMonth({
   let consecutiveWork = state.consecutiveWorkDays;
   let lastRestDate = state.lastRestDate;
   let flexWeekIndex = state.flexRotationIndex ?? employeeRotationRank;
-  let sundaysStreak = state.sundaysWorkedStreak || 0;
   const firstDayRule = dates[0]
     ? getEffectiveRuleForDate({
         employeeId: employee.id,
@@ -677,7 +676,6 @@ export function generateEmployeeScheduleForMonth({
         restDaysRemainingInCycle = 0;
         lastRestDate = isoDate;
       }
-      if (dow === 0) sundaysStreak = 0;
       continue;
     }
 
@@ -688,10 +686,8 @@ export function generateEmployeeScheduleForMonth({
       if (st === "F" || st === "A" || st === "FECHADO") {
         consecutiveWork = 0;
         lastRestDate = isoDate;
-        if (dow === 0) sundaysStreak = 0;
       } else if (st === "T" || st === "MEIO_EXP") {
         consecutiveWork += 1;
-        if (dow === 0) sundaysStreak += 1;
       }
       generatedEntries.push({
         ...manualExisting,
@@ -710,7 +706,6 @@ export function generateEmployeeScheduleForMonth({
         consecutiveWork = 0;
         lastRestDate = isoDate;
       }
-      if (dow === 0) sundaysStreak = 0;
       generatedEntries.push({
         employeeId: employee.id,
         workPositionId: alloc.workPositionId,
@@ -779,15 +774,13 @@ export function generateEmployeeScheduleForMonth({
       }
     }
 
-    let finalStatus = "T";
+    let finalStatus;
     if (isRestDay) {
       finalStatus = "F";
       consecutiveWork = 0;
       lastRestDate = isoDate;
-      if (dow === 0) sundaysStreak = 0;
     } else {
       consecutiveWork += 1;
-      if (dow === 0) sundaysStreak += 1;
       if (marketDay && marketDay.openingMode === "HALF_DAY") {
         finalStatus = "MEIO_EXP";
       } else {

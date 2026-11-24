@@ -1,728 +1,266 @@
 // =============================================================================
-// SISTEMA INTEGRADO DE GESTÃO DO QUADRO DE COLABORADORES, ESCALAS E WORKFORCE ERP
-// Versão 8.0.0-ERP — Identidade Visual Oficial União Supermercados (Manual da Marca),
-// Contexto Global de Unidade, Autenticação Verificada e Persistência Particionada
+// WORKFORCE ERP UNIÃO SUPERMERCADOS — APLICAÇÃO PRINCIPAL (v9.0)
+// Arquitetura desacoplada:
+//   • Identidade, MFA e ciclo de acesso : src/services/authService.js + AuthPages.jsx
+//   • Persistência particionada + RLS   : src/services/erpRepository.js + partitionCodec.js
+//   • Layout global e Design System     : src/layout/AppShell.jsx + src/ui/*
 // =============================================================================
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
+import UniaoLogo from "./components/UniaoLogo.jsx";
 import {
-  sb,
-  ErpRepository,
-  assertPermission,
-  assertUnitAccess,
-  resolveAuthenticatedOperatorSession,
-  registerOperatorAccount,
-  authenticateOperatorWithPassword,
-} from "./services/erpRepository.js";
-import UniaoLogo, { UniaoBrandManualModal } from "./components/UniaoLogo.jsx";
-import {
-  UNIAO_THEMES,
-  UNIAO_BRAND_MANUAL,
   getStoredUniaoThemeId,
   applyUniaoThemeVariables,
+  getStoredErpDensity,
+  applyErpDensity,
 } from "./theme/uniaoTheme.js";
-import DashboardAndBiModule from "./modules/DashboardAndBiModule.jsx";
-import OrganizationAndPositionsModule from "./modules/OrganizationAndPositionsModule.jsx";
-import EmployeesAndAvailabilityModule from "./modules/EmployeesAndAvailabilityModule.jsx";
-import RulesShiftsAndCalendarModule from "./modules/RulesShiftsAndCalendarModule.jsx";
-import ScheduleGridModule from "./modules/ScheduleGridModule.jsx";
-import AdminAndAuditModule from "./modules/AdminAndAuditModule.jsx";
-
-const OPERATOR_SESSION_STORAGE_KEY = "erp_v8_verified_operator_session";
-
-function TelaLogin({
-  onLogin,
-  onRegisterUserProfile,
-  units = [],
-  userProfiles = [],
-  activeThemeId,
-  onSelectTheme,
-  onOpenBrandManual,
-}) {
-  const [modo, setModo] = useState("identificado"); // 'identificado' | 'supabase_login' | 'supabase_cadastro'
-  const [email, setEmail] = useState("admin@uniaosupermercados.com.br");
-  const [nomeOperador, setNomeOperador] = useState("Gestão Operacional — União Supermercados");
-  const [perfilInicial, setPerfilInicial] = useState("ADMIN");
-  const [senha, setSenha] = useState("");
-  const [erro, setErro] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const activeTheme = UNIAO_THEMES[activeThemeId] || UNIAO_THEMES.uniao_institucional;
-
-  const submeterSupabase = async () => {
-    setErro("");
-    setLoading(true);
-    try {
-      if (modo === "supabase_login") {
-        const sessionPayload = await authenticateOperatorWithPassword({
-          email: email.trim(),
-          password: senha,
-          userProfiles,
-          units,
-        });
-        sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(sessionPayload));
-        onLogin(sessionPayload);
-      } else {
-        const created = await registerOperatorAccount({
-          email: email.trim(),
-          password: senha,
-          fullName: nomeOperador.trim(),
-          roleProfile: perfilInicial,
-          units,
-          userProfiles,
-        });
-        if (onRegisterUserProfile && created.userProfile) {
-          onRegisterUserProfile(created.userProfile, created.sessionPayload);
-        }
-        sessionStorage.setItem(
-          OPERATOR_SESSION_STORAGE_KEY,
-          JSON.stringify(created.sessionPayload)
-        );
-        onLogin(created.sessionPayload);
-      }
-    } catch (e) {
-      setErro(e?.message || String(e));
-    }
-    setLoading(false);
-  };
-
-  const entrarOperadorIdentificado = () => {
-    setErro("");
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanName = nomeOperador.trim();
-    if (!cleanEmail || !cleanEmail.includes("@")) {
-      setErro("Informe um e-mail corporativo válido para identificação na trilha de auditoria.");
-      return;
-    }
-    if (cleanEmail === "gestao.loja03@uniaosupermercados.com.br") {
-      setErro(
-        "A conta genérica legada 'gestao.loja03@uniaosupermercados.com.br' foi desativada por segurança. Informe o seu e-mail nominal real."
-      );
-      return;
-    }
-    if (!cleanName || cleanName.length < 3) {
-      setErro("Informe o nome completo do operador responsável pela sessão.");
-      return;
-    }
-
-    try {
-      const sessionPayload = resolveAuthenticatedOperatorSession({
-        email: cleanEmail,
-        fullName: cleanName,
-        requestedRole: perfilInicial,
-        userProfiles,
-        units,
-        authVerificationStatus: "VERIFIED_OPERATOR_SESSION",
-      });
-      sessionStorage.setItem(OPERATOR_SESSION_STORAGE_KEY, JSON.stringify(sessionPayload));
-      onLogin(sessionPayload);
-    } catch (err) {
-      setErro(err.message);
-    }
-  };
-
-  return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--uniao-login-bg, linear-gradient(135deg, #1B3963 0%, #2B5690 55%, #E9403C 100%))",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "var(--uniao-font, 'Montserrat', sans-serif)",
-        padding: 16,
-      }}
-    >
-      <div
-        style={{
-          background: "var(--uniao-card-bg, #ffffff)",
-          color: "var(--uniao-text-primary, #142B4D)",
-          borderRadius: 16,
-          padding: "1.8rem 2rem",
-          width: 465,
-          maxWidth: "100%",
-          boxShadow: "0 24px 60px rgba(0, 0, 0, 0.35)",
-          borderTop: "6px solid #E9403C",
-          borderBottom: "4px solid #2B5690",
-        }}
-      >
-        <div style={{ textAlign: "center", marginBottom: 18 }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-            <UniaoLogo
-              variant={activeTheme.logoVariantLogin || "original"}
-              layout="horizontal"
-              size="lg"
-              idSuffix="login_main"
-            />
-          </div>
-          <div
-            style={{
-              fontSize: 16,
-              fontWeight: 800,
-              color: "var(--uniao-text-primary, #142B4D)",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            Sistema Integrado de Quadro e Escalas (ERP v8.0)
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--uniao-text-muted, #5E7494)", marginTop: 4 }}>
-            Conceição das Alagoas (Lojas 01 e 02) · Campo Florido (Loja 03)
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            marginBottom: 16,
-            border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-            borderRadius: 8,
-            overflow: "hidden",
-          }}
-        >
-          {[
-            ["identificado", "Acesso Operador Identificado"],
-            ["supabase_login", "Login Senha"],
-            ["supabase_cadastro", "Criar Conta"],
-          ].map(([m, label]) => (
-            <button
-              key={m}
-              onClick={() => {
-                setModo(m);
-                setErro("");
-              }}
-              style={{
-                flex: 1,
-                padding: "8px 4px",
-                fontSize: 11,
-                border: "none",
-                cursor: "pointer",
-                background: modo === m ? "#2B5690" : "var(--uniao-surface-subtle, #F6F9FC)",
-                color: modo === m ? "#FFFFFF" : "var(--uniao-text-secondary, #3B5273)",
-                fontWeight: modo === m ? 700 : 600,
-                fontFamily: "var(--uniao-font, 'Montserrat', sans-serif)",
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {modo === "identificado" ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div
-              style={{
-                background: "var(--uniao-blue-soft, #EBF2FA)",
-                border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                borderLeft: "4px solid #2B5690",
-                borderRadius: 8,
-                padding: "8px 10px",
-                fontSize: 11,
-                color: "var(--uniao-text-primary, #142B4D)",
-              }}
-            >
-              🔒 <strong>Auditoria Nominal Ativa (v8.0):</strong> Toda alteração de escala, quadro ou cadastro é vinculada ao operador identificado abaixo.
-            </div>
-
-            <div>
-              <label
-                style={{
-                  fontSize: 11,
-                  color: "var(--uniao-text-secondary, #3B5273)",
-                  display: "block",
-                  marginBottom: 4,
-                  fontWeight: 700,
-                }}
-              >
-                Nome Completo do Operador *
-              </label>
-              <input
-                type="text"
-                value={nomeOperador}
-                onChange={(e) => setNomeOperador(e.target.value)}
-                placeholder="Ex: Carlos Mendes (RH / Operações)"
-                style={{
-                  width: "100%",
-                  fontSize: 12.5,
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-
-            <div>
-              <label
-                style={{
-                  fontSize: 11,
-                  color: "var(--uniao-text-secondary, #3B5273)",
-                  display: "block",
-                  marginBottom: 4,
-                  fontWeight: 700,
-                }}
-              >
-                E-mail Corporativo Nominal *
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nome.sobrenome@uniaosupermercados.com.br"
-                style={{
-                  width: "100%",
-                  fontSize: 12.5,
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-
-            <div>
-              <label
-                style={{
-                  fontSize: 11,
-                  color: "var(--uniao-text-secondary, #3B5273)",
-                  display: "block",
-                  marginBottom: 4,
-                  fontWeight: 700,
-                }}
-              >
-                Perfil de Acesso Inicial (RBAC)
-              </label>
-              <select
-                value={perfilInicial}
-                onChange={(e) => setPerfilInicial(e.target.value)}
-                style={{
-                  width: "100%",
-                  fontSize: 12,
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                }}
-              >
-                <option value="ADMIN">ADMIN — Administrador Geral (Todas as Lojas)</option>
-                <option value="MANAGER">MANAGER — Gestor de Unidade (Aprovação e Escalas)</option>
-                <option value="OPERATOR">OPERATOR — Operador de Escalas e Cadastros</option>
-                <option value="VIEWER">VIEWER — Consulta e BI (Somente Leitura)</option>
-              </select>
-            </div>
-
-            {erro && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#991b1b",
-                  background: "#fef2f2",
-                  border: "1px solid #fecaca",
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                }}
-              >
-                {erro}
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={entrarOperadorIdentificado}
-              style={{
-                padding: "10px 0",
-                borderRadius: 8,
-                border: "none",
-                background: "#E9403C",
-                color: "#FFFFFF",
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: "pointer",
-                boxShadow: "0 4px 12px rgba(233, 64, 60, 0.35)",
-              }}
-            >
-              Iniciar Sessão Auditada — União Supermercados
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {modo === "supabase_cadastro" && (
-              <div>
-                <label
-                  style={{
-                    fontSize: 11,
-                    color: "var(--uniao-text-secondary, #3B5273)",
-                    display: "block",
-                    marginBottom: 4,
-                    fontWeight: 700,
-                  }}
-                >
-                  Nome Completo do Operador *
-                </label>
-                <input
-                  type="text"
-                  value={nomeOperador}
-                  onChange={(e) => setNomeOperador(e.target.value)}
-                  placeholder="Ex: Maria Souza (RH / Operações)"
-                  style={{
-                    width: "100%",
-                    fontSize: 12.5,
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                    background: "var(--uniao-card-bg, #FFFFFF)",
-                    color: "var(--uniao-text-primary, #142B4D)",
-                    boxSizing: "border-box",
-                  }}
-                />
-              </div>
-            )}
-            <div>
-              <label
-                style={{
-                  fontSize: 11,
-                  color: "var(--uniao-text-secondary, #3B5273)",
-                  display: "block",
-                  marginBottom: 4,
-                  fontWeight: 700,
-                }}
-              >
-                E-mail Corporativo *
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submeterSupabase()}
-                placeholder="seu@uniaosupermercados.com.br"
-                style={{
-                  width: "100%",
-                  fontSize: 12.5,
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <div>
-              <label
-                style={{
-                  fontSize: 11,
-                  color: "var(--uniao-text-secondary, #3B5273)",
-                  display: "block",
-                  marginBottom: 4,
-                  fontWeight: 700,
-                }}
-              >
-                Senha (mín. 4 caracteres) *
-              </label>
-              <input
-                type="password"
-                value={senha}
-                onChange={(e) => setSenha(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && submeterSupabase()}
-                placeholder="••••••••"
-                style={{
-                  width: "100%",
-                  fontSize: 12.5,
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  boxSizing: "border-box",
-                }}
-              />
-            </div>
-            {modo === "supabase_cadastro" && (
-              <div>
-                <label
-                  style={{
-                    fontSize: 11,
-                    color: "var(--uniao-text-secondary, #3B5273)",
-                    display: "block",
-                    marginBottom: 4,
-                    fontWeight: 700,
-                  }}
-                >
-                  Perfil de Acesso (RBAC)
-                </label>
-                <select
-                  value={perfilInicial}
-                  onChange={(e) => setPerfilInicial(e.target.value)}
-                  style={{
-                    width: "100%",
-                    fontSize: 12,
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                    background: "var(--uniao-card-bg, #FFFFFF)",
-                    color: "var(--uniao-text-primary, #142B4D)",
-                  }}
-                >
-                  <option value="ADMIN">ADMIN — Administrador Geral (Todas as Lojas)</option>
-                  <option value="MANAGER">MANAGER — Gestor de Unidade (Aprovação e Escalas)</option>
-                  <option value="OPERATOR">OPERATOR — Operador de Escalas e Cadastros</option>
-                  <option value="VIEWER">VIEWER — Consulta e BI (Somente Leitura)</option>
-                </select>
-              </div>
-            )}
-
-            {erro && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: erro.includes("criada") ? "#166534" : "#991b1b",
-                  background: erro.includes("criada") ? "#f0fdf4" : "#fef2f2",
-                  border: `1px solid ${erro.includes("criada") ? "#bbf7d0" : "#fecaca"}`,
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                }}
-              >
-                {erro}
-              </div>
-            )}
-
-            <button
-              onClick={submeterSupabase}
-              disabled={loading || !email || !senha}
-              style={{
-                padding: "10px 0",
-                borderRadius: 8,
-                border: "none",
-                background: "#E9403C",
-                color: "#fff",
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: loading ? "wait" : "pointer",
-                opacity: !email || !senha ? 0.6 : 1,
-              }}
-            >
-              {loading
-                ? "Processando..."
-                : modo === "supabase_login"
-                  ? "Acessar com Senha"
-                  : "Criar Conta e Entrar"}
-            </button>
-          </div>
-        )}
-
-        {/* Rodapé do Card de Login: Seletor Rápido de Temas da Marca */}
-        <div
-          style={{
-            marginTop: 16,
-            paddingTop: 12,
-            borderTop: "1px solid var(--uniao-border, #D5E0EE)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 8,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: "var(--uniao-text-muted, #5E7494)" }}>
-              Tema Visual:
-            </span>
-            <select
-              value={activeThemeId}
-              onChange={(e) => onSelectTheme(e.target.value)}
-              style={{
-                fontSize: 11,
-                padding: "4px 8px",
-                borderRadius: 6,
-                border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                background: "var(--uniao-surface-subtle, #F6F9FC)",
-                color: "var(--uniao-text-primary, #142B4D)",
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              {Object.values(UNIAO_THEMES).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenBrandManual}
-            style={{
-              fontSize: 10.5,
-              fontWeight: 700,
-              color: "#2B5690",
-              background: "transparent",
-              border: "none",
-              cursor: "pointer",
-              textDecoration: "underline",
-            }}
-          >
-            🎨 Ver Código de Identidade Visual
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Navegação orientada à tarefa real do operador (Seção 7 — Sem códigos técnicos "Módulo A..H")
-const NAV_ITEMS = [
-  { id: "dashboard", icon: "📊", label: "Dashboard e Indicadores", desc: "Posição do Quadro e Períodos" },
-  { id: "schedules", icon: "📅", label: "Escalas Mensais", desc: "Grade, Pincel, Validação e Projeção" },
-  { id: "organization", icon: "🏛️", label: "Estrutura Organizacional", desc: "Empresa, Lojas, Setores e Funções" },
-  { id: "positions", icon: "🪑", label: "Quadro de Postos e Vagas", desc: "Postos, Ocupação e Rateio" },
-  { id: "employees", icon: "👥", label: "Colaboradores", desc: "Central do Colaborador e Alocações" },
-  { id: "vacations", icon: "🏖️", label: "Férias e Afastamentos", desc: "Programação de Férias, LM e INSS" },
-  { id: "rules_shifts", icon: "⏱️", label: "Jornadas e Regras", desc: "8 Colunas de Horário, 5x1, 5x2 e 6x1" },
-  { id: "calendar", icon: "🗓️", label: "Calendário Operacional", desc: "Feriados, Domingos e Meio Expediente" },
-  { id: "admin", icon: "🔐", label: "Administração e Auditoria", desc: "Operadores, RBAC, Logs e Backup" },
-];
+import {
+  ErpRepository,
+  PERMISSIONS_BY_ROLE,
+  assertPermission,
+  assertUnitAccess,
+  canSimulateRbacRole,
+} from "./services/erpRepository.js";
+import {
+  APP_ENV_LABEL,
+  getSupabaseClient,
+  detectUrlAuthFlow,
+  resolveAuthGateState,
+  signInOperator,
+  requestPasswordRecovery,
+  setDefinitivePassword,
+  startTotpEnrollment,
+  verifyTotpFactor,
+  signOutSecurely,
+} from "./services/authService.js";
+import {
+  LoginPage,
+  ForgotPasswordPage,
+  SetPasswordPage,
+  MfaEnrollPage,
+  MfaVerifyPage,
+  AccountBlockedPage,
+  SessionExpiredPage,
+  ServiceUnavailablePage,
+} from "./features/auth/AuthPages.jsx";
+import AppShell from "./layout/AppShell.jsx";
+import {
+  NAV_GROUPS,
+  filterNavGroupsByPermissions,
+  findNavItem,
+} from "./layout/navigation.js";
+const DashboardAndBiModule = lazy(() => import("./modules/DashboardAndBiModule.jsx"));
+const ScheduleGridModule = lazy(() => import("./modules/ScheduleGridModule.jsx"));
+const OrganizationAndPositionsModule = lazy(() =>
+  import("./modules/OrganizationAndPositionsModule.jsx")
+);
+const EmployeesAndAvailabilityModule = lazy(() =>
+  import("./modules/EmployeesAndAvailabilityModule.jsx")
+);
+const RulesShiftsAndCalendarModule = lazy(() =>
+  import("./modules/RulesShiftsAndCalendarModule.jsx")
+);
+const AdminAndAuditModule = lazy(() => import("./modules/AdminAndAuditModule.jsx"));
+import { Spinner, Alert } from "./ui/index.jsx";
 
 export default function App() {
-  const [sessao, setSessao] = useState(null);
-  const [authCarregando, setAuthCarregando] = useState(true);
+  const supabaseClient = useMemo(() => getSupabaseClient(), []);
+
+  // Estado do portão de autenticação (fail-closed por padrão)
+  const [authState, setAuthState] = useState({
+    gate: "loading",
+    profile: null,
+    blockVariant: null,
+  });
+  const [authViewMode, setAuthViewMode] = useState("login"); // 'login' | 'forgot'
+  const [authBusy, setAuthBusy] = useState(false);
+  const [loginNotice, setLoginNotice] = useState(null);
+
+  // Preferências visuais do operador (centralizadas nas configurações do usuário)
+  const [themeId, setThemeId] = useState(() => getStoredUniaoThemeId());
+  const [density, setDensity] = useState(() => getStoredErpDensity());
+
+  // Estado operacional autorizado (carregado apenas após autenticação completa)
   const [db, setDb] = useState(null);
-  const [activeModule, setActiveModule] = useState("schedules");
-  const [selectedUnitId, setSelectedUnitId] = useState("LOJA_03");
-  const [selectedYearMonth, setSelectedYearMonth] = useState("2026-11");
-  const [currentUserRole, setCurrentUserRole] = useState("ADMIN");
-  const [syncStatus, setSyncStatus] = useState("idle"); // 'idle' | 'saving' | 'saved' | 'error'
-  const [toastMsg, setToastMsg] = useState(null);
-  const [activeThemeId, setActiveThemeId] = useState(() => getStoredUniaoThemeId());
-  const [brandManualOpen, setBrandManualOpen] = useState(false);
+  const [settings, setSettings] = useState({});
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbError, setDbError] = useState("");
+  const partitionsRef = useRef(new Map());
+  const revisionsRef = useRef(new Map());
   const saveQueueRef = useRef(Promise.resolve());
 
-  const activeTheme = useMemo(
-    () => UNIAO_THEMES[activeThemeId] || UNIAO_THEMES.uniao_institucional,
-    [activeThemeId]
-  );
+  // Navegação e contexto global único de unidade
+  const [activeNavId, setActiveNavId] = useState("schedules");
+  const [selectedUnitId, setSelectedUnitId] = useState("LOJA_03");
+  const [selectedYearMonth, setSelectedYearMonth] = useState("2026-11");
+  const [previewRole, setPreviewRole] = useState(null); // estritamente visual (exclusivo MASTER)
+  const [syncStatus, setSyncStatus] = useState("idle");
+  const [toastMsg, setToastMsg] = useState(null);
 
   useEffect(() => {
-    applyUniaoThemeVariables(activeThemeId);
-  }, [activeThemeId]);
+    applyUniaoThemeVariables(themeId);
+  }, [themeId]);
 
   useEffect(() => {
-    let mounted = true;
-    // 1. Verifica sessão armazenada do operador identificado ou sessão Supabase Auth
-    const storedOperator = sessionStorage.getItem(OPERATOR_SESSION_STORAGE_KEY);
-    if (storedOperator) {
-      try {
-        const parsed = JSON.parse(storedOperator);
-        if (parsed?.user?.email && parsed.user.email !== "gestao.loja03@uniaosupermercados.com.br") {
-          setSessao(parsed);
-          if (parsed.roleProfile) setCurrentUserRole(parsed.roleProfile);
-          setAuthCarregando(false);
-          return;
-        }
-      } catch {
-        // Ignora caso inválido
-      }
-    }
-
-    sb.auth
-      .getSession()
-      .then(({ data }) => {
-        if (!mounted) return;
-        if (data?.session?.user?.email) {
-          setSessao({
-            user: {
-              email: data.session.user.email,
-              fullName: data.session.user.user_metadata?.full_name || data.session.user.email,
-            },
-            roleProfile: "ADMIN",
-            authVerificationStatus: "VERIFIED_SUPABASE_AUTH",
-          });
-        }
-        setAuthCarregando(false);
-      })
-      .catch(() => {
-        if (mounted) setAuthCarregando(false);
-      });
-
-    const {
-      data: { subscription },
-    } = sb.auth.onAuthStateChange((_e, s) => {
-      if (s?.user?.email) {
-        setSessao({
-          user: {
-            email: s.user.email,
-            fullName: s.user.user_metadata?.full_name || s.user.email,
-          },
-          roleProfile: "ADMIN",
-          authVerificationStatus: "VERIFIED_SUPABASE_AUTH",
-        });
-      }
-    });
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    ErpRepository.loadDatabase().then((loaded) => {
-      if (active) setDb(loaded);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
+    applyErpDensity(density);
+  }, [density]);
 
   const showToast = useCallback((text, type = "ok") => {
     setToastMsg({ text, type });
     setTimeout(() => setToastMsg(null), 4500);
   }, []);
 
-  // Perfil completo do operador ativo (para verificação de acesso por unidade)
-  const activeUserProfile = useMemo(() => {
-    if (!db || !sessao?.user?.email) return null;
-    const registered = (db.userProfiles || []).find(
-      (u) => u.email.toLowerCase() === sessao.user.email.toLowerCase()
-    );
-    return (
-      registered || {
-        email: sessao.user.email,
-        fullName: sessao.user.fullName || sessao.user.email,
-        roleProfile: currentUserRole,
-        authorizedUnits: sessao.authorizedUnits || (db.units || []).map((u) => u.id),
+  const refreshAuthGate = useCallback(
+    async (explicitFlow = null) => {
+      const flow = explicitFlow || detectUrlAuthFlow();
+      const next = await resolveAuthGateState(supabaseClient, { urlFlow: flow });
+      setAuthState(next);
+      return next;
+    },
+    [supabaseClient]
+  );
+
+  // Inicialização e assinatura de eventos de autenticação do Supabase
+  useEffect(() => {
+    let mounted = true;
+    const initialFlow = detectUrlAuthFlow();
+
+    resolveAuthGateState(supabaseClient, { urlFlow: initialFlow }).then((resolved) => {
+      if (mounted) setAuthState(resolved);
+    });
+
+    if (!supabaseClient) return () => { mounted = false; };
+
+    const {
+      data: { subscription },
+    } = supabaseClient.auth.onAuthStateChange((event) => {
+      if (!mounted) return;
+      if (event === "PASSWORD_RECOVERY") {
+        resolveAuthGateState(supabaseClient, { urlFlow: "recovery" }).then((r) => {
+          if (mounted) setAuthState(r);
+        });
+      } else if (event === "SIGNED_OUT") {
+        setDb(null);
+        partitionsRef.current = new Map();
+        revisionsRef.current = new Map();
+        setPreviewRole(null);
+        setAuthState({ gate: "unauthenticated", profile: null, blockVariant: null });
       }
-    );
-  }, [db, sessao, currentUserRole]);
+    });
 
-  // Unidades disponíveis para o operador logado
-  const availableUnits = useMemo(() => {
-    if (!db?.units) return [];
-    if (currentUserRole === "ADMIN" || !activeUserProfile?.authorizedUnits?.length) {
-      return db.units.filter((u) => u.active !== false);
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [supabaseClient]);
+
+  // Carrega partições autorizadas quando o portão liberar `authenticated`
+  const reloadAuthorizedDatabase = useCallback(async () => {
+    if (!supabaseClient) return;
+    setDbLoading(true);
+    setDbError("");
+    try {
+      const loaded = await ErpRepository.loadAuthorizedDatabase(supabaseClient);
+      partitionsRef.current = loaded.partitionsMap;
+      revisionsRef.current = loaded.revisionsByKey;
+      setSettings(loaded.settings || {});
+      setDb(loaded.db);
+    } catch (err) {
+      setDbError(err?.message || "Não foi possível carregar os dados autorizados.");
+    } finally {
+      setDbLoading(false);
     }
-    return db.units.filter(
-      (u) => u.active !== false && activeUserProfile.authorizedUnits.includes(u.id)
-    );
-  }, [db, currentUserRole, activeUserProfile]);
+  }, [supabaseClient]);
 
-  const activeCompany = useMemo(() => {
-    if (!db?.companies?.length) return null;
-    const unit = (db.units || []).find((u) => u.id === selectedUnitId);
-    return (
-      db.companies.find((c) => c.id === unit?.companyId) || db.companies[0]
-    );
-  }, [db, selectedUnitId]);
+  useEffect(() => {
+    if (authState.gate !== "authenticated") return;
+    let active = true;
+    ErpRepository.loadAuthorizedDatabase(supabaseClient)
+      .then((loaded) => {
+        if (!active) return;
+        partitionsRef.current = loaded.partitionsMap;
+        revisionsRef.current = loaded.revisionsByKey;
+        setSettings(loaded.settings || {});
+        setDb(loaded.db);
+        setDbError("");
+      })
+      .catch((err) => {
+        if (active) setDbError(err?.message || "Falha ao carregar partições.");
+      });
+    return () => {
+      active = false;
+    };
+  }, [authState.gate, supabaseClient]);
 
-  const activeStoreManualInfo = useMemo(() => {
-    return UNIAO_BRAND_MANUAL.stores[selectedUnitId] || UNIAO_BRAND_MANUAL.stores.LOJA_03;
-  }, [selectedUnitId]);
+  const activeProfile = authState.profile;
 
-  // Mutação centralizada com verificação RBAC, autorização por unidade, auditoria nominal e controle de concorrência
+  // Unidades estritamente permitidas ao operador autenticado (vazio = nenhuma loja!)
+  const availableUnits = useMemo(() => {
+    if (!db?.units || !activeProfile) return [];
+    const activeList = db.units.filter((u) => u.active !== false);
+    if (activeProfile.role === "MASTER") return activeList;
+    const allowedIds = Array.isArray(activeProfile.authorizedUnits)
+      ? activeProfile.authorizedUnits
+      : [];
+    return activeList.filter((u) => allowedIds.includes(u.id));
+  }, [db, activeProfile]);
+
+  const effectiveUnitId = useMemo(() => {
+    if (availableUnits.length === 0) return "";
+    if (availableUnits.some((u) => u.id === selectedUnitId)) return selectedUnitId;
+    return availableUnits[0].id;
+  }, [availableUnits, selectedUnitId]);
+
+  // Permissões visuais da navegação (respeitam previewRole apenas na UI para MASTER)
+  const visualPermissions = useMemo(() => {
+    if (!activeProfile) return [];
+    if (previewRole && canSimulateRbacRole(activeProfile)) {
+      return PERMISSIONS_BY_ROLE[previewRole] || [];
+    }
+    return activeProfile.permissions || [];
+  }, [activeProfile, previewRole]);
+
+  const authorizedNavGroups = useMemo(
+    () => filterNavGroupsByPermissions(NAV_GROUPS, visualPermissions),
+    [visualPermissions]
+  );
+
+  // Garante que o módulo ativo seja permitido pelas permissões visuais atuais
+  const effectiveNavItem = useMemo(() => {
+    const found = findNavItem(activeNavId, authorizedNavGroups);
+    if (found) return found.item;
+    return authorizedNavGroups[0]?.items?.[0] || null;
+  }, [activeNavId, authorizedNavGroups]);
+
+  // Notificações operacionais relevantes da unidade selecionada
+  const notifications = useMemo(() => {
+    if (!db || !effectiveUnitId) return [];
+    const list = [];
+    for (const ms of db.monthlySchedules || []) {
+      if (ms.unitId === effectiveUnitId && ms.status === "IMPACTED_BY_PAST_CHANGE") {
+        list.push({
+          id: `imp_${ms.yearMonth}`,
+          title: `Projeção impactada em ${ms.yearMonth}`,
+          description: ms.impactWarning || "Edições em competência anterior exigem revisão.",
+          targetItemId: "schedules",
+        });
+      }
+    }
+    const vacantUrgent = (db.workPositions || []).filter(
+      (p) => p.unitId === effectiveUnitId && p.status === "OPEN_AUTHORIZED"
+    ).length;
+    if (vacantUrgent > 0) {
+      list.push({
+        id: "open_pos",
+        title: `${vacantUrgent} posto(s) autorizado(s) em aberto`,
+        description: "Consulte o quadro de postos e vagas da unidade ativa.",
+        targetItemId: "positions",
+      });
+    }
+    return list;
+  }, [db, effectiveUnitId]);
+
+  // Mutação centralizada: valida no cliente (defesa em profundidade) e grava via RPC `erp_save_batch`
   const handleMutateDb = useCallback(
     ({
       permission,
@@ -731,750 +269,467 @@ export default function App() {
       entityType,
       entityId,
       unitId,
-      yearMonth,
       summary,
       beforeState = null,
       afterState = null,
       updater,
     }) => {
+      if (!activeProfile) return;
+      const targetUnit = unitId || effectiveUnitId;
+
       try {
         if (permission) {
-          assertPermission(currentUserRole, permission);
+          assertPermission(activeProfile, permission);
         }
-        assertUnitAccess(activeUserProfile, unitId || selectedUnitId);
+        if (targetUnit && module !== "ESTRUTURA_ORGANIZACIONAL" && module !== "MOTOR_DE_REGRAS") {
+          assertUnitAccess(activeProfile, targetUnit);
+        }
       } catch (permErr) {
         showToast(permErr.message, "err");
         return;
       }
 
       setDb((prevDb) => {
-        const clone = structuredClone(prevDb);
-        updater(clone);
-        clone.schemaRevision = Number(clone.schemaRevision || 1) + 1;
+        if (!prevDb) return prevDb;
+        const nextDb = structuredClone(prevDb);
+        updater(nextDb);
+        nextDb.schemaRevision = Number(nextDb.schemaRevision || 1) + 1;
 
         if (
           entityId &&
           (String(action || "").includes("EXCLUIR") || String(action || "").includes("REMOVER"))
         ) {
-          const tombstones = new Set(clone.deletedEntityIds || []);
+          const tombstones = new Set(nextDb.deletedEntityIds || []);
           tombstones.add(String(entityId));
-          clone.deletedEntityIds = Array.from(tombstones);
+          nextDb.deletedEntityIds = Array.from(tombstones);
         }
-
-        const auditEntry = ErpRepository.createAuditEntry({
-          actorEmail: sessao?.user?.email || "operador.identificado@uniaosupermercados.com.br",
-          actorName: sessao?.user?.fullName || sessao?.user?.email,
-          actorRole: currentUserRole,
-          authVerificationStatus: sessao?.authVerificationStatus || "VERIFIED_OPERATOR_SESSION",
-          originType: "OPERATOR_ACTION",
-          module,
-          action,
-          entityType,
-          entityId,
-          summary,
-          beforeState,
-          afterState,
-        });
-        clone.auditLogs = [auditEntry, ...(clone.auditLogs || []).slice(0, 399)];
 
         setSyncStatus("saving");
         saveQueueRef.current = saveQueueRef.current
           .catch(() => {})
           .then(() =>
-            ErpRepository.saveDatabase(clone, {
-              entityType,
-              entityId,
-              unitId: unitId || selectedUnitId,
-              yearMonth: yearMonth || null,
+            ErpRepository.saveMutation({
+              client: supabaseClient,
+              prevPartitionsMap: partitionsRef.current,
+              nextDb,
+              revisionsByKey: revisionsRef.current,
+              auditPayload: {
+                module,
+                action,
+                entityType,
+                entityId,
+                unitId: targetUnit || null,
+                summary,
+                beforeState,
+                afterState,
+              },
             })
           )
-          .then((savedState) => {
+          .then((saved) => {
+            partitionsRef.current = saved.partitionsMap;
+            revisionsRef.current = saved.revisionsByKey;
             setSyncStatus("saved");
-            if (savedState?.schemaRevision) {
-              clone.schemaRevision = savedState.schemaRevision;
-            }
             setTimeout(() => setSyncStatus("idle"), 2000);
           })
-          .catch(() => setSyncStatus("error"));
+          .catch((saveErr) => {
+            setSyncStatus("error");
+            showToast(saveErr?.message || "Falha ao sincronizar com o servidor.", "err");
+            if (saveErr?.code === "UNAUTHENTICATED") {
+              setAuthState({ gate: "session_expired", profile: null, blockVariant: null });
+            } else if (
+              saveErr?.code === "REVISION_CONFLICT" ||
+              saveErr?.code === "SCHEDULE_LOCKED" ||
+              saveErr?.code === "FORBIDDEN" ||
+              saveErr?.code === "FORBIDDEN_UNIT"
+            ) {
+              reloadAuthorizedDatabase();
+            }
+          });
 
-        showToast(summary, "ok");
-        return clone;
+        if (summary) showToast(summary, "ok");
+        return nextDb;
       });
     },
-    [currentUserRole, activeUserProfile, selectedUnitId, sessao, showToast]
+    [activeProfile, effectiveUnitId, supabaseClient, showToast, reloadAuthorizedDatabase]
   );
 
-  const handleResetToSeed = useCallback(
-    (seedData) => {
-      try {
-        assertPermission(currentUserRole, "MANAGE_STRUCTURE");
-      } catch (e) {
-        showToast(e.message, "err");
-        return;
+  // Handlers de autenticação
+  const handleSignIn = async (credentials) => {
+    setAuthBusy(true);
+    setLoginNotice(null);
+    try {
+      const res = await signInOperator(credentials, supabaseClient);
+      if (res.serviceUnavailable) {
+        setAuthState({ gate: "service_unavailable", profile: null, blockVariant: null });
+        return res;
       }
-      setDb(seedData);
-      ErpRepository.saveDatabase(seedData, {
-        entityType: "SYSTEM",
-        entityId: "RESTORE_SEED_LOJA03",
-      });
-      showToast("Base oficial da Loja 03 restaurada com sucesso!", "ok");
-    },
-    [currentUserRole, showToast]
-  );
+      if (res.ok && res.gate) {
+        setAuthState({
+          gate: res.gate,
+          profile: res.profile || null,
+          blockVariant: res.blockVariant || null,
+        });
+      }
+      return res;
+    } finally {
+      setAuthBusy(false);
+    }
+  };
 
-  if (authCarregando || !db) {
+  const handleForgotPassword = async (email) => {
+    setAuthBusy(true);
+    try {
+      return await requestPasswordRecovery(email, supabaseClient);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSetPassword = async (newPassword, mode) => {
+    setAuthBusy(true);
+    try {
+      const res = await setDefinitivePassword(
+        { newPassword, mode, profile: activeProfile },
+        supabaseClient
+      );
+      if (res.ok && res.gate) {
+        setAuthState({
+          gate: res.gate,
+          profile: res.profile || null,
+          blockVariant: res.blockVariant || null,
+        });
+      }
+      return res;
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleMfaVerify = async ({ factorId = null, code }) => {
+    setAuthBusy(true);
+    try {
+      const res = await verifyTotpFactor({ factorId, code }, supabaseClient);
+      if (res.ok && res.gate) {
+        setAuthState({
+          gate: res.gate,
+          profile: res.profile || null,
+          blockVariant: res.blockVariant || null,
+        });
+      }
+      return res;
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOutSecurely(supabaseClient);
+    setDb(null);
+    setPreviewRole(null);
+    setAuthViewMode("login");
+    setAuthState({ gate: "unauthenticated", profile: null, blockVariant: null });
+  };
+
+  // ---------------------------------------------------------------------------
+  // RENDERIZAÇÃO DO PORTÃO DE IDENTIDADE E ACESSO
+  // ---------------------------------------------------------------------------
+  if (authState.gate === "loading") {
     return (
       <div
         style={{
           minHeight: "100vh",
           display: "flex",
           flexDirection: "column",
-          gap: 12,
           alignItems: "center",
           justifyContent: "center",
-          background: "var(--uniao-app-bg, #F0F4F9)",
-          fontFamily: "var(--uniao-font, 'Montserrat', sans-serif)",
-          color: "var(--uniao-text-primary, #142B4D)",
-          fontWeight: 700,
+          gap: 14,
+          background: "var(--erp-bg-canvas)",
+          color: "var(--erp-ink)",
         }}
       >
-        <UniaoLogo variant="original" size="lg" idSuffix="loader" />
-        <div>Inicializando Motor Relacional do ERP União Supermercados v8.0...</div>
+        <UniaoLogo variant="original" size="md" idSuffix="boot" />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600 }}>
+          <Spinner size={16} />
+          <span>Verificando credenciais e sessão corporativa...</span>
+        </div>
       </div>
     );
   }
 
-  if (!sessao) {
+  if (authState.gate === "unconfigured" || authState.gate === "service_unavailable") {
     return (
-      <>
-        <TelaLogin
-          units={db.units || []}
-          userProfiles={db.userProfiles || []}
-          activeThemeId={activeThemeId}
-          onSelectTheme={setActiveThemeId}
-          onOpenBrandManual={() => setBrandManualOpen(true)}
-          onRegisterUserProfile={(userProfile, sessionPayload) => {
-            setDb((prevDb) => {
-              if (!prevDb) return prevDb;
-              const clone = structuredClone(prevDb);
-              clone.userProfiles = clone.userProfiles || [];
-              const idx = clone.userProfiles.findIndex(
-                (u) => u.email.toLowerCase() === userProfile.email.toLowerCase()
-              );
-              if (idx >= 0) {
-                clone.userProfiles[idx] = { ...clone.userProfiles[idx], ...userProfile };
-              } else {
-                clone.userProfiles.push(userProfile);
-              }
-              const auditEntry = ErpRepository.createAuditEntry({
-                actorEmail: userProfile.email,
-                actorName: userProfile.fullName,
-                actorRole: userProfile.roleProfile,
-                authVerificationStatus:
-                  sessionPayload?.authVerificationStatus || "VERIFIED_LOCAL_AUTH",
-                originType: "OPERATOR_ACTION",
-                module: "ADMIN_RBAC",
-                action: "CRIAR_CONTA_OPERADOR",
-                entityType: "USER_PROFILE",
-                entityId: userProfile.id,
-                summary: `Nova conta de operador criada: ${userProfile.fullName} (${userProfile.email}) com perfil ${userProfile.roleProfile}.`,
-              });
-              clone.auditLogs = [auditEntry, ...(clone.auditLogs || []).slice(0, 399)];
-              ErpRepository.saveDatabase(clone, {
-                entityType: "USER_PROFILE",
-                entityId: userProfile.id,
-              });
-              return clone;
-            });
-            showToast(
-              `Conta criada com sucesso! Bem-vindo(a), ${userProfile.fullName}.`,
-              "ok"
-            );
-          }}
-          onLogin={(s) => {
-            setSessao(s);
-            if (s.roleProfile) setCurrentUserRole(s.roleProfile);
-          }}
-        />
-        <UniaoBrandManualModal
-          open={brandManualOpen}
-          onClose={() => setBrandManualOpen(false)}
-          activeThemeId={activeThemeId}
-          onSelectTheme={setActiveThemeId}
-        />
-      </>
+      <ServiceUnavailablePage
+        environmentLabel={APP_ENV_LABEL}
+        unconfigured={authState.gate === "unconfigured"}
+        busy={authBusy}
+        onRetry={async () => {
+          setAuthBusy(true);
+          await refreshAuthGate();
+          setAuthBusy(false);
+        }}
+      />
     );
   }
+
+  if (authState.gate === "session_expired") {
+    return (
+      <SessionExpiredPage
+        environmentLabel={APP_ENV_LABEL}
+        onContinue={() => {
+          setLoginNotice("Sua sessão anterior expirou. Autentique-se novamente.");
+          setAuthState({ gate: "unauthenticated", profile: null, blockVariant: null });
+        }}
+      />
+    );
+  }
+
+  if (authState.gate === "account_blocked") {
+    return (
+      <AccountBlockedPage
+        environmentLabel={APP_ENV_LABEL}
+        variant={authState.blockVariant || "deactivated"}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  if (
+    authState.gate === "set_password_invite" ||
+    authState.gate === "set_password_recovery" ||
+    authState.gate === "set_password_forced"
+  ) {
+    const modeMap = {
+      set_password_invite: "invite",
+      set_password_recovery: "recovery",
+      set_password_forced: "forced",
+    };
+    const mode = modeMap[authState.gate];
+    return (
+      <SetPasswordPage
+        environmentLabel={APP_ENV_LABEL}
+        mode={mode}
+        profile={activeProfile}
+        busy={authBusy}
+        onSubmit={(pwd) => handleSetPassword(pwd, mode)}
+        onCancel={handleSignOut}
+      />
+    );
+  }
+
+  if (authState.gate === "mfa_enroll_required") {
+    return (
+      <MfaEnrollPage
+        environmentLabel={APP_ENV_LABEL}
+        onStart={() => startTotpEnrollment(supabaseClient)}
+        onVerify={handleMfaVerify}
+        onSignOut={handleSignOut}
+        busy={authBusy}
+      />
+    );
+  }
+
+  if (authState.gate === "mfa_verify_required") {
+    return (
+      <MfaVerifyPage
+        environmentLabel={APP_ENV_LABEL}
+        onSubmit={handleMfaVerify}
+        onSignOut={handleSignOut}
+        busy={authBusy}
+      />
+    );
+  }
+
+  if (authState.gate !== "authenticated") {
+    if (authViewMode === "forgot") {
+      return (
+        <ForgotPasswordPage
+          environmentLabel={APP_ENV_LABEL}
+          onSubmit={handleForgotPassword}
+          onBack={() => setAuthViewMode("login")}
+          busy={authBusy}
+        />
+      );
+    }
+    return (
+      <LoginPage
+        environmentLabel={APP_ENV_LABEL}
+        onSubmit={handleSignIn}
+        onForgotPassword={() => setAuthViewMode("forgot")}
+        busy={authBusy}
+        notice={loginNotice}
+      />
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // AMBIENTE AUTENTICADO E AUTORIZADO
+  // ---------------------------------------------------------------------------
+  const activeModuleKey = effectiveNavItem?.moduleKey || "schedules";
+  const activeParams = effectiveNavItem?.params || {};
 
   return (
-    <>
-      <style>{`
-        @media print {
-          @page { size: landscape; margin: 7mm; }
-          body { background: #fff !important; margin: 0; padding: 0; }
-          * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-          .no-print { display: none !important; }
-          .erp-main { padding: 0 !important; margin: 0 !important; }
-        }
-      `}</style>
-
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "flex",
-          background: "var(--uniao-app-bg, #F0F4F9)",
-          fontFamily: "var(--uniao-font, 'Montserrat', sans-serif)",
-          color: "var(--uniao-text-primary, #142B4D)",
-        }}
-      >
-        {/* Navegação Lateral dos Módulos do ERP + Identidade Visual União Supermercados */}
-        <aside
+    <AppShell
+      navGroups={authorizedNavGroups}
+      activeItemId={effectiveNavItem?.id || activeNavId}
+      onNavigate={setActiveNavId}
+      units={availableUnits}
+      selectedUnitId={effectiveUnitId}
+      onSelectUnit={setSelectedUnitId}
+      selectedYearMonth={selectedYearMonth}
+      user={activeProfile}
+      previewRole={previewRole}
+      onClearPreviewRole={() => setPreviewRole(null)}
+      syncStatus={syncStatus}
+      notifications={notifications}
+      themeId={themeId}
+      onChangeTheme={setThemeId}
+      density={density}
+      onChangeDensity={setDensity}
+      maintenanceBanner={settings?.maintenance_mode}
+      onSignOut={handleSignOut}
+    >
+      {toastMsg && (
+        <div
           className="no-print"
+          role="status"
+          aria-live="polite"
           style={{
-            width: 268,
-            background: "var(--uniao-sidebar-bg, linear-gradient(180deg, #2B5690 0%, #1B3963 100%))",
-            color: "var(--uniao-sidebar-text, #F8FAFC)",
+            position: "fixed",
+            bottom: 18,
+            right: 22,
+            zIndex: 3000,
+            background: toastMsg.type === "err" ? "var(--erp-danger)" : "var(--erp-ink)",
+            color: "#FFFFFF",
+            padding: "10px 16px",
+            borderRadius: 6,
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: "var(--erp-shadow-popover)",
+            maxWidth: 460,
+          }}
+        >
+          {toastMsg.text}
+        </div>
+      )}
+
+      {dbError ? (
+        <Alert tone="danger" title="Erro ao carregar dados operacionais">
+          {dbError}
+        </Alert>
+      ) : !db || dbLoading ? (
+        <div
+          style={{
+            padding: "48px 20px",
             display: "flex",
-            flexDirection: "column",
-            flexShrink: 0,
-            borderRight: "1px solid var(--uniao-sidebar-border, #3A69A8)",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            fontSize: 13,
+            color: "var(--erp-ink-muted)",
           }}
         >
-          {/* Faixa Superior Bicolor da Marca */}
-          <div
-            style={{
-              height: 4,
-              background: "linear-gradient(90deg, #E9403C 0%, #E9403C 50%, #2B5690 50%, #2B5690 100%)",
-            }}
-          />
-
-          <div
-            style={{
-              padding: "14px 16px 12px",
-              borderBottom: "1px solid var(--uniao-sidebar-border, #3A69A8)",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <UniaoLogo
-                variant={activeTheme.logoVariantSidebar || "positivo_azul"}
-                size="sm"
-                idSuffix="sidebar_hdr"
-              />
-              <span
-                style={{
-                  fontSize: 9.5,
-                  fontWeight: 800,
-                  background: "#E9403C",
-                  color: "#fff",
-                  padding: "3px 7px",
-                  borderRadius: 5,
-                  boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-                }}
-              >
-                ERP v8.0
-              </span>
-            </div>
+          <Spinner size={16} />
+          <span>Carregando partições autorizadas...</span>
+        </div>
+      ) : availableUnits.length === 0 && !activeModuleKey.startsWith("admin_") ? (
+        <Alert tone="warning" title="Nenhuma unidade operacional vinculada">
+          Sua conta não possui filiais autorizadas para consulta operacional. Solicite a atribuição
+          de unidades ao administrador MASTER.
+        </Alert>
+      ) : (
+        <Suspense
+          fallback={
             <div
               style={{
-                fontSize: 10.5,
-                color: "var(--uniao-sidebar-muted, #C5D8F0)",
-                marginTop: 6,
-                fontWeight: 600,
-              }}
-            >
-              {activeCompany?.tradeName || activeCompany?.legalName || "União Supermercados"}
-            </div>
-
-            {/* SELETOR GLOBAL DE UNIDADE ATIVA (Seção 5) */}
-            <div
-              style={{
-                marginTop: 10,
-                background: "var(--uniao-sidebar-box-bg, rgba(20, 43, 77, 0.45))",
-                border: "1px solid var(--uniao-sidebar-border, #3A69A8)",
-                borderRadius: 8,
-                padding: "8px 10px",
-              }}
-            >
-              <label
-                style={{
-                  fontSize: 9.5,
-                  fontWeight: 800,
-                  color: "var(--uniao-sidebar-text, #FFFFFF)",
-                  textTransform: "uppercase",
-                  display: "block",
-                  marginBottom: 4,
-                  letterSpacing: "0.04em",
-                }}
-              >
-                🏬 Unidade Operacional Ativa
-              </label>
-              <select
-                value={selectedUnitId}
-                onChange={(e) => setSelectedUnitId(e.target.value)}
-                style={{
-                  width: "100%",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                  fontSize: 11.5,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {availableUnits.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.name} ({u.code}) — {u.city || "MG"}
-                  </option>
-                ))}
-              </select>
-              {activeStoreManualInfo && (
-                <div
-                  style={{
-                    fontSize: 9.5,
-                    color: "var(--uniao-sidebar-muted, #C5D8F0)",
-                    marginTop: 4,
-                    lineHeight: 1.3,
-                  }}
-                >
-                  📍 {activeStoreManualInfo.address} · {activeStoreManualInfo.phone}
-                </div>
-              )}
-            </div>
-
-            {/* SELETOR RÁPIDO DE TEMA DA IDENTIDADE VISUAL UNIÃO */}
-            <div
-              style={{
-                marginTop: 8,
-                background: "var(--uniao-sidebar-box-bg, rgba(20, 43, 77, 0.45))",
-                border: "1px solid var(--uniao-sidebar-border, #3A69A8)",
-                borderRadius: 8,
-                padding: "7px 10px",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 4,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 800,
-                    color: "var(--uniao-sidebar-text, #FFFFFF)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}
-                >
-                  🎨 Tema União Supermercados
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setBrandManualOpen(true)}
-                  style={{
-                    fontSize: 9.5,
-                    fontWeight: 700,
-                    background: "#E9403C",
-                    color: "#FFFFFF",
-                    border: "none",
-                    borderRadius: 4,
-                    padding: "2px 6px",
-                    cursor: "pointer",
-                  }}
-                  title="Abrir Manual de Identidade Visual União Supermercados"
-                >
-                  Manual
-                </button>
-              </div>
-              <select
-                value={activeThemeId}
-                onChange={(e) => setActiveThemeId(e.target.value)}
-                style={{
-                  width: "100%",
-                  background: "var(--uniao-card-bg, #FFFFFF)",
-                  color: "var(--uniao-text-primary, #142B4D)",
-                  border: "1px solid var(--uniao-border-strong, #B6C8E0)",
-                  borderRadius: 6,
-                  padding: "5px 8px",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {Object.values(UNIAO_THEMES).map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <nav
-            style={{
-              padding: "10px 10px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 3,
-              flex: 1,
-              overflowY: "auto",
-            }}
-          >
-            {NAV_ITEMS.map((item) => {
-              const isActive = activeModule === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveModule(item.id)}
-                  style={{
-                    textAlign: "left",
-                    padding: "8px 11px",
-                    borderRadius: 8,
-                    border: "none",
-                    cursor: "pointer",
-                    background: isActive
-                      ? "var(--uniao-sidebar-item-active-bg, rgba(255,255,255,0.14))"
-                      : "transparent",
-                    color: isActive
-                      ? "var(--uniao-sidebar-item-active-text, #FFFFFF)"
-                      : "var(--uniao-sidebar-text, #F8FAFC)",
-                    borderLeft: isActive
-                      ? "4px solid var(--uniao-sidebar-item-active-border, #E9403C)"
-                      : "4px solid transparent",
-                    transition: "all 0.15s",
-                  }}
-                >
-                  <div style={{ fontSize: 12, fontWeight: isActive ? 800 : 600 }}>
-                    {item.icon} {item.label}
-                  </div>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "var(--uniao-sidebar-muted, #C5D8F0)",
-                      marginTop: 1,
-                      paddingLeft: 20,
-                    }}
-                  >
-                    {item.desc}
-                  </div>
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* Rodapé da Sidebar: Operador Verificado, Perfil RBAC e Sincronização */}
-          <div
-            style={{
-              padding: "12px 14px",
-              borderTop: "1px solid var(--uniao-sidebar-border, #3A69A8)",
-              fontSize: 11,
-              color: "var(--uniao-sidebar-muted, #C5D8F0)",
-            }}
-          >
-            <div
-              style={{
-                fontWeight: 700,
-                color: "var(--uniao-sidebar-text, #F8FAFC)",
-                fontSize: 11.5,
-              }}
-            >
-              {sessao.user.fullName || sessao.user.email}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--uniao-sidebar-muted, #C5D8F0)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {sessao.user.email}
-            </div>
-            <div
-              style={{
-                marginTop: 5,
+                padding: "36px 20px",
                 display: "flex",
-                justifyContent: "space-between",
                 alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                fontSize: 13,
+                color: "var(--erp-ink-muted)",
               }}
             >
-              <span>
-                Perfil:{" "}
-                <strong
-                  style={{
-                    color: "#FFFFFF",
-                    background: "#E9403C",
-                    padding: "1px 6px",
-                    borderRadius: 4,
-                    fontSize: 10,
-                  }}
-                >
-                  {currentUserRole}
-                </strong>
-              </span>
-              {syncStatus === "saving" && <span style={{ color: "#fbbf24" }}>Salvando...</span>}
-              {syncStatus === "saved" && (
-                <span style={{ color: "#4ade80" }}>✓ Rev #{db.schemaRevision || 1}</span>
-              )}
-              {syncStatus === "error" && <span style={{ color: "#f87171" }}>⚠ Erro Sync</span>}
+              <Spinner size={16} />
+              <span>Carregando módulo operacional...</span>
             </div>
-            <button
-              onClick={() => {
-                sessionStorage.removeItem(OPERATOR_SESSION_STORAGE_KEY);
-                sb.auth.signOut();
-                setSessao(null);
-              }}
-              style={{
-                marginTop: 8,
-                width: "100%",
-                padding: "6px 0",
-                borderRadius: 6,
-                border: "1px solid var(--uniao-sidebar-border, #3A69A8)",
-                background: "var(--uniao-sidebar-box-bg, rgba(20, 43, 77, 0.45))",
-                color: "var(--uniao-sidebar-text, #FFFFFF)",
-                fontSize: 11,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              Encerrar Sessão Auditada
-            </button>
-          </div>
-        </aside>
-
-        {/* Área Principal do Módulo Ativo */}
-        <main
-          className="erp-main"
-          style={{
-            flex: 1,
-            padding: "14px 20px 20px",
-            overflowX: "hidden",
-            minWidth: 0,
-          }}
+          }
         >
-          {/* Barra Institucional Superior União Supermercados (Não Impressa) */}
-          <div
-            className="no-print"
-            style={{
-              background: "var(--uniao-card-bg, #FFFFFF)",
-              border: "1px solid var(--uniao-border, #D5E0EE)",
-              borderLeft: "5px solid #E9403C",
-              borderRadius: 10,
-              padding: "8px 14px",
-              marginBottom: 14,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: 10,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span
-                style={{
-                  background: "#2B5690",
-                  color: "#FFFFFF",
-                  fontSize: 10.5,
-                  fontWeight: 800,
-                  padding: "3px 8px",
-                  borderRadius: 5,
-                }}
-              >
-                {activeStoreManualInfo.name} · {activeStoreManualInfo.city}/{activeStoreManualInfo.state}
-              </span>
-              <span style={{ fontSize: 11.5, fontWeight: 700, color: "var(--uniao-text-primary, #142B4D)" }}>
-                {NAV_ITEMS.find((n) => n.id === activeModule)?.icon}{" "}
-                {NAV_ITEMS.find((n) => n.id === activeModule)?.label}
-              </span>
-              <span style={{ fontSize: 11, color: "var(--uniao-text-muted, #5E7494)" }}>
-                · Competência: <strong>{selectedYearMonth}</strong>
-              </span>
-            </div>
-
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {Object.values(UNIAO_THEMES).map((t) => {
-                const isCurr = activeThemeId === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setActiveThemeId(t.id)}
-                    style={{
-                      fontSize: 10.5,
-                      fontWeight: isCurr ? 800 : 600,
-                      padding: "4px 9px",
-                      borderRadius: 999,
-                      border: isCurr
-                        ? "1px solid #E9403C"
-                        : "1px solid var(--uniao-border-strong, #B6C8E0)",
-                      background: isCurr ? "#E9403C" : "var(--uniao-surface-subtle, #F6F9FC)",
-                      color: isCurr ? "#FFFFFF" : "var(--uniao-text-secondary, #3B5273)",
-                      cursor: "pointer",
-                    }}
-                    title={t.description}
-                  >
-                    {t.name}
-                  </button>
-                );
-              })}
-
-              <button
-                type="button"
-                onClick={() => setBrandManualOpen(true)}
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 700,
-                  padding: "4px 10px",
-                  borderRadius: 6,
-                  border: "1px solid #2B5690",
-                  background: "#2B5690",
-                  color: "#FFFFFF",
-                  cursor: "pointer",
-                }}
-              >
-                🎨 Identidade Visual
-              </button>
-            </div>
-          </div>
-
-          {toastMsg && (
-            <div
-              className="no-print"
-              style={{
-                position: "fixed",
-                bottom: 18,
-                right: 22,
-                zIndex: 3000,
-                background: toastMsg.type === "err" ? "#E9403C" : "#2B5690",
-                color: "#fff",
-                padding: "10px 16px",
-                borderRadius: 8,
-                fontSize: 12,
-                fontWeight: 700,
-                boxShadow: "0 10px 25px rgba(0,0,0,0.25)",
-                borderLeft: "4px solid #FFFFFF",
-                maxWidth: 480,
-              }}
-            >
-              {toastMsg.type === "err" ? "⛔ " : "✅ "}
-              {toastMsg.text}
-            </div>
-          )}
-
-          {activeModule === "dashboard" && (
+          {activeModuleKey === "dashboard" && (
             <DashboardAndBiModule
               db={db}
-              selectedUnitId={selectedUnitId}
-              setSelectedUnitId={setSelectedUnitId}
+              selectedUnitId={effectiveUnitId}
               selectedYearMonth={selectedYearMonth}
               setSelectedYearMonth={setSelectedYearMonth}
-              onNavigate={setActiveModule}
+              onNavigate={setActiveNavId}
             />
           )}
 
-          {activeModule === "schedules" && (
+          {activeModuleKey === "schedules" && (
             <ScheduleGridModule
               db={db}
-              selectedUnitId={selectedUnitId}
-              setSelectedUnitId={setSelectedUnitId}
+              selectedUnitId={effectiveUnitId}
               selectedYearMonth={selectedYearMonth}
               setSelectedYearMonth={setSelectedYearMonth}
-              currentUserRole={currentUserRole}
-              currentUserEmail={sessao?.user?.email}
+              currentUserRole={previewRole || activeProfile.role}
+              currentUserEmail={activeProfile.email}
+              syncStatus={syncStatus}
               onMutateDb={handleMutateDb}
-              onNavigate={setActiveModule}
+              onNavigate={setActiveNavId}
             />
           )}
 
-          {activeModule === "organization" && (
+          {(activeModuleKey === "organization" || activeModuleKey === "positions") && (
             <OrganizationAndPositionsModule
-              key="mod_organization"
+              key={`org_${effectiveNavItem?.id || activeModuleKey}`}
               db={db}
-              selectedUnitId={selectedUnitId}
+              selectedUnitId={effectiveUnitId}
               setSelectedUnitId={setSelectedUnitId}
               selectedYearMonth={selectedYearMonth}
-              initialTab="structure"
+              initialTab={activeParams.initialTab || "positions"}
+              initialSection={activeParams.section || null}
               onMutateDb={handleMutateDb}
             />
           )}
 
-          {activeModule === "positions" && (
-            <OrganizationAndPositionsModule
-              key="mod_positions"
-              db={db}
-              selectedUnitId={selectedUnitId}
-              setSelectedUnitId={setSelectedUnitId}
-              selectedYearMonth={selectedYearMonth}
-              initialTab="positions"
-              onMutateDb={handleMutateDb}
-            />
-          )}
-
-          {activeModule === "employees" && (
+          {(activeModuleKey === "employees" || activeModuleKey === "vacations") && (
             <EmployeesAndAvailabilityModule
-              key="mod_employees"
+              key={`emp_${effectiveNavItem?.id || activeModuleKey}`}
               db={db}
-              selectedUnitId={selectedUnitId}
+              selectedUnitId={effectiveUnitId}
               selectedYearMonth={selectedYearMonth}
-              initialTab="employees"
+              initialTab={activeParams.initialTab || "employees"}
               onMutateDb={handleMutateDb}
             />
           )}
 
-          {activeModule === "vacations" && (
-            <EmployeesAndAvailabilityModule
-              key="mod_vacations"
-              db={db}
-              selectedUnitId={selectedUnitId}
-              selectedYearMonth={selectedYearMonth}
-              initialTab="unavailability"
-              onMutateDb={handleMutateDb}
-            />
-          )}
-
-          {activeModule === "rules_shifts" && (
+          {(activeModuleKey === "rules_shifts" || activeModuleKey === "calendar") && (
             <RulesShiftsAndCalendarModule
-              key="mod_rules_shifts"
+              key={`rul_${effectiveNavItem?.id || activeModuleKey}`}
               db={db}
-              selectedUnitId={selectedUnitId}
-              initialTab="rules"
+              selectedUnitId={effectiveUnitId}
+              initialTab={activeParams.initialTab || "rules"}
               onMutateDb={handleMutateDb}
             />
           )}
 
-          {activeModule === "calendar" && (
-            <RulesShiftsAndCalendarModule
-              key="mod_calendar"
-              db={db}
-              selectedUnitId={selectedUnitId}
-              initialTab="calendar"
-              onMutateDb={handleMutateDb}
-            />
-          )}
-
-          {activeModule === "admin" && (
+          {activeModuleKey.startsWith("admin_") && (
             <AdminAndAuditModule
-              db={db}
-              sessao={sessao}
-              currentUserRole={currentUserRole}
-              setCurrentUserRole={setCurrentUserRole}
-              onMutateDb={handleMutateDb}
-              onResetToSeed={handleResetToSeed}
+              section={activeModuleKey}
+              units={db.units || []}
+              currentUser={activeProfile}
+              permissions={activeProfile.permissions || []}
+              previewRole={previewRole}
+              onChangePreviewRole={setPreviewRole}
+              settings={settings}
+              onSettingsUpdated={setSettings}
+              supabaseClient={supabaseClient}
+              onReloadDatabase={reloadAuthorizedDatabase}
+              onNotify={showToast}
             />
           )}
-        </main>
-      </div>
-
-      <UniaoBrandManualModal
-        open={brandManualOpen}
-        onClose={() => setBrandManualOpen(false)}
-        activeThemeId={activeThemeId}
-        onSelectTheme={setActiveThemeId}
-      />
-    </>
+        </Suspense>
+      )}
+    </AppShell>
   );
 }
