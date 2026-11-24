@@ -359,7 +359,7 @@ export default function App() {
     setLoginNotice(null);
     try {
       const res = await signInOperator(credentials, supabaseClient);
-      if (res.serviceUnavailable) {
+      if (res.serviceUnavailable && supabaseClient) {
         setAuthState({ gate: "service_unavailable", profile: null, blockVariant: null });
         return res;
       }
@@ -456,11 +456,10 @@ export default function App() {
     );
   }
 
-  if (authState.gate === "unconfigured" || authState.gate === "service_unavailable") {
+  if (authState.gate === "service_unavailable") {
     return (
       <ServiceUnavailablePage
         environmentLabel={APP_ENV_LABEL}
-        unconfigured={authState.gate === "unconfigured"}
         busy={authBusy}
         onRetry={async () => {
           setAuthBusy(true);

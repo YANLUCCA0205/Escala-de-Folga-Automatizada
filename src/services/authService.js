@@ -14,6 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { evaluatePassword } from "../domain/passwordPolicy.js";
 import { purgeLegacyInsecureStorage } from "./erpRepository.js";
+import { createLocalErpClient } from "./localApiClient.js";
 
 const SUPABASE_URL = String(import.meta.env?.VITE_SUPABASE_URL || "").trim();
 const SUPABASE_ANON_KEY = String(import.meta.env?.VITE_SUPABASE_ANON_KEY || "").trim();
@@ -72,17 +73,24 @@ let supabaseSingleton = null;
 
 export function getSupabaseClient() {
   purgeLegacyInsecureStorage();
-  if (!isSupabaseConfigured()) return null;
   if (!supabaseSingleton) {
-    supabaseSingleton = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
+    if (isSupabaseConfigured()) {
+      supabaseSingleton = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          storage: sessionStorageAdapter,
+          storageKey: AUTH_STORAGE_KEY,
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+        },
+      });
+    } else if (typeof window !== "undefined") {
+      // Opera sobre o backend PostgreSQL + RLS integrado (/api/v9)
+      supabaseSingleton = createLocalErpClient({
+        baseUrl: "/api/v9",
         storage: sessionStorageAdapter,
-        storageKey: AUTH_STORAGE_KEY,
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-      },
-    });
+      });
+    }
   }
   return supabaseSingleton;
 }
@@ -163,7 +171,7 @@ export function detectUrlAuthFlow() {
 export async function resolveAuthGateState(client = getSupabaseClient(), { urlFlow = null } = {}) {
   purgeLegacyInsecureStorage();
   if (!client) {
-    return { gate: "unconfigured", profile: null, reason: "Variáveis de conexão ausentes." };
+    return { gate: "unauthenticated", profile: null, unconfigured: true };
   }
 
   try {

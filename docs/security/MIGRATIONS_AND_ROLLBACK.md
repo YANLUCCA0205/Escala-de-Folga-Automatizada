@@ -13,6 +13,16 @@
 
 ## 2. Procedimento Seguro de Criação do Primeiro MASTER
 
+### Modo A — Backend PostgreSQL Soberano Integrado (`npm run dev` / Servidor Local)
+1. Ao iniciar `npm run dev`, o plugin `server/viteBackendPlugin.js` inicializa `.data/pgdata`, aplica idempotentemente as migrations `20261201000100` e `20261201000200` e migra automaticamente as 19 partições operacionais.
+2. Em um terminal administrativo da própria máquina (com `npm run dev` ativo ou com o servidor parado), execute:
+   ```powershell
+   npm run provision:master -- --email seu.email@uniaosupermercados.com.br --name "Seu Nome Completo"
+   ```
+   - Caso `npm run dev` esteja ativo, o script autentica em `http://127.0.0.1:5173/api/v9/internal/bootstrap` usando o segredo local `.data/admin.secret` (restrito a *loopback*). Caso esteja parado, abre `.data/pgdata` diretamente.
+3. Abra no navegador o **link criptográfico de uso único** emitido no terminal, defina a senha definitiva (>= 12 caracteres) e cadastre o segundo fator TOTP (`aal2`).
+
+### Modo B — Projeto Supabase Cloud Externo
 1. Aplique as migrations `20261201000100` e `20261201000200` no projeto Supabase (`supabase db push`).
 2. Publique a Edge Function administrativa:
    ```bash
@@ -30,10 +40,10 @@
    - A conta passa de `PENDING` para `ACTIVE` (`complete_activation`).
    - O sistema exige imediatamente o cadastramento do segundo fator TOTP (`MfaEnrollPage`) para elevar a sessão a `aal2`.
 
-### Recuperação Administrativa (Break-Glass)
+### Recuperação Administrativa (Break-Glass — Local ou Cloud)
 Caso todos os dispositivos MFA do único `MASTER` sejam perdidos e não exista outro `MASTER` ativo:
 ```powershell
-node scripts/provision-first-master.mjs --recover --i-understand-break-glass --email diretoria@uniaosupermercados.com.br --name "Governança Corporativa" --mode link
+npm run provision:master -- --recover --i-understand-break-glass --email diretoria@uniaosupermercados.com.br --name "Governança Corporativa"
 ```
 - A função `public.admin_recover_master` bloqueia a execução caso exista outro `MASTER` ativo no banco.
 - Remove os fatores TOTP perdidos, invalida sessões, exige troca imediata de senha (`must_change_password = true`) e grava registro imutável com `origin_type = 'BREAK_GLASS'` em `public.erp_audit_logs`.

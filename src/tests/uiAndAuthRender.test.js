@@ -23,7 +23,7 @@ import { FORBIDDEN_PRODUCTION_TOKENS } from "../../scripts/tutorial-generator/se
 
 test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via Vite SSR sem controles públicos inseguros", async () => {
   const vite = await createServer({
-    server: { middlewareMode: true },
+    server: { middlewareMode: true, hmr: false, watch: null },
     appType: "custom",
     logLevel: "silent",
   });

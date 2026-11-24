@@ -590,17 +590,34 @@ export function MfaEnrollPage({ environmentLabel, onStart, onVerify, onSignOut, 
           {enrollment.secret && (
             <div
               style={{
-                padding: "8px 10px",
+                padding: "10px 12px",
                 background: "var(--erp-surface)",
                 border: "1px solid var(--erp-border)",
                 borderRadius: 6,
                 fontSize: "var(--erp-text-xs)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
               }}
             >
-              Chave manual:{" "}
-              <code style={{ fontFamily: "var(--erp-font-mono)", fontWeight: 700 }}>
-                {enrollment.secret}
-              </code>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div style={{ color: "var(--erp-ink-muted)", marginBottom: 2 }}>
+                  Chave de configuração TOTP (Base32)
+                </div>
+                <code style={{ fontFamily: "var(--erp-font-mono)", fontWeight: 700, fontSize: 13 }}>
+                  {enrollment.secret}
+                </code>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                icon="copy"
+                onClick={() => navigator.clipboard?.writeText(enrollment.secret)}
+              >
+                Copiar
+              </Button>
             </div>
           )}
 
@@ -765,7 +782,6 @@ export function SessionExpiredPage({ environmentLabel, onContinue }) {
 
 export function ServiceUnavailablePage({
   environmentLabel,
-  unconfigured = false,
   onRetry,
   busy = false,
 }) {
@@ -773,15 +789,10 @@ export function ServiceUnavailablePage({
     <AuthLayout environmentLabel={environmentLabel}>
       <Alert
         tone="danger"
-        title={
-          unconfigured
-            ? "Serviço de identidade não configurado neste ambiente"
-            : "Serviço de autenticação indisponível"
-        }
+        title="Serviço de autenticação indisponível"
       >
-        {unconfigured
-          ? "As variáveis VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY não foram definidas. Por política de segurança corporativa, o sistema opera em modo fail-closed e não utiliza contas ou caches locais."
-          : "Não foi possível validar sua identidade junto ao servidor de autenticação. Por segurança, novas sessões permanecem bloqueadas até o restabelecimento da conexão."}
+        Não foi possível validar sua identidade junto ao servidor corporativo no momento. Por
+        segurança, novas sessões permanecem bloqueadas até o restabelecimento da comunicação.
       </Alert>
       <div style={{ marginTop: 18 }}>
         <Button variant="primary" size="lg" fullWidth onClick={onRetry} loading={busy}>
@@ -796,7 +807,7 @@ export function ServiceUnavailablePage({
           lineHeight: 1.5,
         }}
       >
-        Caso o problema persista, acione a equipe de infraestrutura / TI do União Supermercados.
+        Caso a indisponibilidade persista, contate o administrador do sistema.
       </p>
     </AuthLayout>
   );

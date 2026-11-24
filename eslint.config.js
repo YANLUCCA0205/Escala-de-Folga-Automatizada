@@ -19,7 +19,7 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/tests/**/*.js', 'scripts/**/*.{js,mjs}', 'supabase/**/*.mjs'],
+    files: ['src/tests/**/*.js', 'scripts/**/*.{js,mjs}', 'supabase/**/*.mjs', 'server/**/*.{js,mjs}', 'vite.config.js'],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
     },
