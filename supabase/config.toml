@@ -1,0 +1,50 @@
+# =============================================================================
+# SUPABASE CONFIGURATION — WORKFORCE ERP UNIÃO SUPERMERCADOS
+# Endurecimento de autenticação, sessões, MFA, política de senhas e rate limits.
+# =============================================================================
+project_id = "uniao-workforce-erp"
+
+[api]
+enabled = true
+schemas = ["public"]
+extra_search_path = ["public"]
+max_rows = 1000
+
+[auth]
+enabled = true
+# BLOQUEIO OBRIGATÓRIO DE CADASTRO PÚBLICO: contas só nascem via provisionamento MASTER (service_role).
+enable_signup = false
+enable_anonymous_sign_ins = false
+# Expiração curta do access token (1h) com rotação automática de refresh token e detecção de reuso.
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+# Política de senha no GoTrue (complementada por passwordPolicy.js e HIBP no painel Supabase).
+minimum_password_length = 12
+password_requirements = "lower_upper_letters_digits_symbols"
+
+[auth.email]
+enable_signup = false
+double_confirm_changes = true
+enable_confirmations = true
+secure_password_change = true
+max_frequency = "1m0s"
+otp_length = 8
+otp_expiry = 3600
+
+[auth.mfa]
+max_enrolled_factors = 5
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[auth.rate_limit]
+email_sent = 10
+sms_sent = 0
+token_refresh = 60
+sign_in_sign_ups = 15
+token_verifications = 20
+
+[functions.admin-users]
+verify_jwt = true
