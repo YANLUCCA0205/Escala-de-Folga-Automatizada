@@ -1,0 +1,558 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "name": "Workforce ERP — Gestão de Quadro, Alocação e Escalas Operacionais",
+    "packageName": "escala-de-folga-automatiazda",
+    "erpVersion": "8.0.0-ERP",
+    "routingArchitecture": "STATE_DRIVEN_SPA",
+    "baseEntryUrl": "http://localhost:5173/",
+    "staticAnalysisDate": "2026-11-05",
+    "unitTestSuiteStatus": {
+      "command": "npm test",
+      "totalScenarios": 40,
+      "passed": 40,
+      "failed": 0
+    }
+  },
+  "classificationLegend": {
+    "CONFIRMADA": "Funcionalidade validada simultaneamente no código-fonte, na suíte de testes e comprovada visualmente em execução real no navegador.",
+    "PARCIALMENTE CONFIRMADA": "Funcionalidade 100% implementada e conectada na árvore de componentes React (JSX + handlers ativos) e/ou validada pelos 40 testes automatizados de domínio, aguardando apenas a execução visual no navegador com interceptação de banco (Etapa 2).",
+    "NAO_VERIFICADA": "Funcionalidade dependente de infraestrutura externa em tempo de execução (ex.: servidor remoto Supabase Auth/REST ou diálogo nativo de impressão do SO) não verificável sem conexão ativa ou efeito colateral externo."
+  },
+  "features": [
+    {
+      "id": "FEAT-AUTH-01",
+      "module": "AUTH",
+      "componentFile": "src/App.jsx",
+      "name": "Login Nominal de Operador Identificado",
+      "purpose": "Autenticar rapidamente o operador informando Nome Completo, E-mail Corporativo e Perfil RBAC inicial, registrando sessão verificada em sessionStorage sem depender de senha no Supabase Auth.",
+      "accessRoute": "URL '/' (exibida automaticamente quando não há sessão ativa em sessionStorage) -> Aba 'Acesso Operador Identificado'",
+      "requiredRole": "PUBLIC (Pré-autenticação; permite selecionar ADMIN, MANAGER, OPERATOR ou VIEWER)",
+      "requiredPermission": null,
+      "prerequisites": [
+        "Estar deslogado (sessionStorage sem a chave 'erp_v8_verified_operator_session').",
+        "Informar nome com no mínimo 3 caracteres e e-mail corporativo diferente do legado bloqueado ('gestao.loja03@uniaosupermercados.com.br')."
+      ],
+      "demoActions": [
+        "Acessar http://localhost:5173/.",
+        "Selecionar a aba 'Acesso Operador Identificado'.",
+        "Preencher o campo 'Nome Completo do Operador' com 'Carlos Mendes'.",
+        "Preencher o campo 'E-mail Corporativo Nominal' com 'carlos.mendes@uniaosupermercados.com.br'.",
+        "Selecionar o perfil 'ADMIN — Administrador Corporativo (Acesso Total)' no select 'Perfil de Acesso Inicial'.",
+        "Clicar no botão 'Ingressar com Identificação Nominal'."
+      ],
+      "expectedResult": "Sessão gravada em sessionStorage ('erp_v8_verified_operator_session'), transição imediata para o shell principal do ERP na tela 'Escalas Mensais' e exibição do nome/perfil na barra superior.",
+      "dataImpact": "SESSION_STORAGE_ONLY",
+      "operationRisks": "Baixo. Altera apenas o sessionStorage do navegador local, sem mutação no banco de dados.",
+      "requiredEvidence": [
+        "Screenshot da TelaLogin preenchida.",
+        "Screenshot da Topbar exibindo o operador 'Carlos Mendes' e badge 'ADMIN'.",
+        "Dump da chave 'erp_v8_verified_operator_session' no sessionStorage."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-AUTH-02",
+      "module": "AUTH",
+      "componentFile": "src/App.jsx",
+      "name": "Autenticação e Cadastro via Supabase Auth (E-mail e Senha)",
+      "purpose": "Autenticar ou registrar conta de usuário diretamente no serviço GoTrue do Supabase Auth.",
+      "accessRoute": "URL '/' (TelaLogin) -> Abas 'Login Senha' e 'Criar Conta'",
+      "requiredRole": "PUBLIC",
+      "requiredPermission": null,
+      "prerequisites": [
+        "Conexão de rede ativa com a instância Supabase configurada.",
+        "Credenciais válidas cadastradas no Supabase Auth."
+      ],
+      "demoActions": [
+        "Na TelaLogin, clicar na aba 'Login Senha'.",
+        "Preencher e-mail e senha (>= 6 caracteres).",
+        "Clicar em 'Acessar com Senha'."
+      ],
+      "expectedResult": "Retorno de token JWT pelo Supabase Auth e abertura do ERP com status 'VERIFIED_SUPABASE_AUTH'.",
+      "dataImpact": "EXTERNAL_AUTH_MUTATION",
+      "operationRisks": "Alto em 'Criar Conta' (cria usuário real na instância remota do Supabase); requer credenciais reais não disponíveis no repositório.",
+      "requiredEvidence": [
+        "Resposta HTTP 200 do endpoint /auth/v1/token.",
+        "Badge '✓ Autenticado (Supabase Auth)' no módulo de Auditoria."
+      ],
+      "verificationStatus": "NAO_VERIFICADA"
+    },
+    {
+      "id": "FEAT-CTX-01",
+      "module": "GLOBAL_SHELL",
+      "componentFile": "src/App.jsx",
+      "name": "Seletor Global de Unidade Operacional e Competência Mensal",
+      "purpose": "Alternar o contexto global de filial (LOJA_03, LOJA_01, LOJA_02) e mês de referência (ex.: 2026-10, 2026-11), filtrando instantaneamente todos os módulos do ERP.",
+      "accessRoute": "URL '/' -> Barra Lateral Esquerda (Sidebar) e Barra Superior (Topbar)",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN (unidades filtradas por authorizedUnits)",
+      "requiredPermission": null,
+      "prerequisites": [
+        "Estar autenticado no sistema."
+      ],
+      "demoActions": [
+        "No menu lateral esquerdo, localizar o seletor 'Unidade / Filial Ativa' e alternar entre 'LOJA 03' e 'LOJA 01'.",
+        "No seletor 'Competência Ativa', alternar entre '2026-10' (Outubro) e '2026-11' (Novembro)."
+      ],
+      "expectedResult": "Todos os indicadores, colaboradores, postos e lançamentos de escala passam a refletir imediatamente a unidade e o mês selecionados.",
+      "dataImpact": "READ_ONLY",
+      "operationRisks": "Nenhum (apenas alteração de estado React em memória).",
+      "requiredEvidence": [
+        "Vídeo/Screenshot mostrando a mudança do título da unidade na Topbar e recarregamento instantâneo da grade de Outubro vs Novembro."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-DASH-01",
+      "module": "DASHBOARD_BI",
+      "componentFile": "src/modules/DashboardAndBiModule.jsx",
+      "name": "Posição do Quadro na Data (Fotografia Diária vs Fluxo Mensal)",
+      "purpose": "Exibir a fotografia exata da lotação da loja em uma data específica (vagas preenchidas, abertas, titulares em férias na data, afastados INSS/LM, disponíveis e escalados trabalhando), distinguindo-a do fluxo acumulado no mês.",
+      "accessRoute": "Sidebar -> Clicar em '📊 Dashboard e Indicadores' (activeModule = 'dashboard')",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "VIEW_BI",
+      "prerequisites": [
+        "Base carregada na unidade LOJA_03.",
+        "Selecionar competência 2026-10 ou 2026-11."
+      ],
+      "demoActions": [
+        "Clicar em '📊 Dashboard e Indicadores' na barra lateral.",
+        "Alterar o seletor '📸 Posição do Quadro na Data' para '2026-10-15' (em Outubro/2026, quando há colaboradora em férias).",
+        "Observar os 7 KPIs executivos e a tabela 'Mapa Analítico de Lotação e Cobertura por Setor'."
+      ],
+      "expectedResult": "Os cards mostram 70 postos próprios + 4 de rateio, vagas preenchidas inalteradas durante férias, redução de 'Disponíveis na Data' e separação clara entre 'Férias na Data' e 'Férias no Fluxo do Mês'.",
+      "dataImpact": "READ_ONLY",
+      "operationRisks": "Nenhum (operação 100% analítica de leitura).",
+      "requiredEvidence": [
+        "Screenshot dos 7 KPIs Executivos.",
+        "Screenshot da tabela setorial comparando 'Férias na Data' vs 'Férias no Mês (Fluxo)'."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-DASH-02",
+      "module": "DASHBOARD_BI",
+      "componentFile": "src/modules/DashboardAndBiModule.jsx",
+      "name": "Inteligência Analítica por Períodos Flexíveis (Dia, Semana 1..5, Quinzena, Mês e Intervalo Livre)",
+      "purpose": "Consultar métricas de operação (Colaboradores Únicos vs Pessoas-Dia Acumuladas e déficits de cobertura) em recortes temporais flexíveis, incluindo a 5ª semana (dias 29 a 31) e intervalos que cruzam meses.",
+      "accessRoute": "Sidebar -> '📊 Dashboard e Indicadores' -> Seção 'Inteligência Analítica por Período Flexível'",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "VIEW_BI",
+      "prerequisites": [
+        "Estar no módulo Dashboard e Indicadores."
+      ],
+      "demoActions": [
+        "Clicar no botão '📆 Semana do Mês (1ª a 5ª)' e selecionar '5ª Semana / Fim do Mês (29 a 30/31)'.",
+        "Clicar em '🌗 Quinzena (1ª ou 2ª)' e alternar entre 1ª e 2ª Quinzena.",
+        "Clicar em '🔍 Intervalo Personalizado' e definir de '2026-10-25' até '2026-11-05'.",
+        "Filtrar por setor 'AÇOUGUE' ou 'CAIXA' e clicar em 'Ver Registros Nominais do Período (Drilldown)'."
+      ],
+      "expectedResult": "Exibição precisa dos cards de Pessoas Únicas vs Pessoas-Dia, linha do tempo diária do intervalo e listagem nominal de todos os lançamentos filtrados.",
+      "dataImpact": "READ_ONLY",
+      "operationRisks": "Nenhum (somente leitura).",
+      "requiredEvidence": [
+        "Screenshot do filtro '5ª Semana' e 'Intervalo Personalizado (25/10 a 05/11)'.",
+        "Screenshot da tabela de Drilldown Nominal expandida."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-01",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Visualização da Grade Mensal com Colunas Fixas, Cauda de Continuidade e Densidade",
+      "purpose": "Inspecionar a escala mensal completa por posto e colaborador com colunas fixas (sticky), visualização dos últimos 6 dias do mês anterior na mesma linha e filtros operacionais.",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' (activeModule = 'schedules')",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": null,
+      "prerequisites": [
+        "Estar autenticado com unidade LOJA_03 e competência 2026-11 selecionadas."
+      ],
+      "demoActions": [
+        "Acessar '📅 Escalas Mensais'.",
+        "Marcar/desmarcar 'Mostrar Últimos 6 Dias do Mês Anterior' para inspecionar a transição 26/10..31/10 -> 01/11.",
+        "Alternar entre visualização 'Compacta' e 'Detalhada'.",
+        "Filtrar pelo setor 'AÇOUGUE' e rolar horizontalmente a grade observando as colunas fixas à esquerda."
+      ],
+      "expectedResult": "As colunas de Posto, Colaborador, Horário e Regra permanecem fixas durante a rolagem horizontal, exibindo a continuidade exata entre o fim de Outubro e o início de Novembro.",
+      "dataImpact": "READ_ONLY",
+      "operationRisks": "Nenhum.",
+      "requiredEvidence": [
+        "Vídeo da rolagem horizontal com colunas sticky.",
+        "Screenshot destacando as 6 colunas finais de Outubro ao lado do dia 01/11."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-02",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Edição Rápida via Modo Pincel (Pintura por Clique/Arraste) e Undo/Redo",
+      "purpose": "Permitir edição ágil de status diário (T, F, A, 1/2) e faixas de almoço (1..4) clicando ou arrastando sobre as células, com suporte a Desfazer (Undo) e Refazer (Redo).",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' -> Barra 'Modo de Edição / Pincel Rápido'",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "EDIT_SCHEDULE",
+      "prerequisites": [
+        "Escala em status 'DRAFT' ou 'VALIDATED' (não bloqueada como 'PUBLISHED').",
+        "Interceptador de rede Supabase ativo para não alterar banco de produção."
+      ],
+      "demoActions": [
+        "Selecionar o pincel '🖌️ Pincel: Folga Adicional (A)' na barra de ferramentas.",
+        "Clicar em duas células consecutivas de um colaborador.",
+        "Selecionar o pincel '🍽️ Almoço 2 (10-11h)' e clicar em um domingo trabalhado ('T').",
+        "Clicar no botão '↩️ Desfazer' e depois em '↪️ Refazer'."
+      ],
+      "expectedResult": "As células recebem imediatamente o status/almoço com marcação de origem 'MANUAL_OVERRIDE' (borda/indicador manual), o rodapé de cobertura é recalculado em tempo real e o Undo/Redo reverte e reaplica o estado com precisão.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Altera lançamentos da escala e dispara gravação no Supabase/localStorage se não estiver em modo Sandbox.",
+      "requiredEvidence": [
+        "Gravação da pintura com pincel e alteração do contador de botão '↩️ Desfazer (N)'."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-03",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Popover Contextual de Célula e Troca de Folga entre Colaboradores",
+      "purpose": "Editar individualmente uma célula (status e faixa de almoço de forma independente), restaurar cálculo automático ou executar troca casada de folga entre dois colaboradores.",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' -> Pincel '🖱️ Clique Contextual (Menu)' -> Clicar em qualquer célula da grade",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "EDIT_SCHEDULE",
+      "prerequisites": [
+        "Modo pincel em 'NONE' ('🖱️ Clique Contextual (Menu)').",
+        "Escala não bloqueada."
+      ],
+      "demoActions": [
+        "Garantir que '🖱️ Clique Contextual (Menu)' está selecionado.",
+        "Clicar na célula de domingo de um colaborador trabalhando ('T').",
+        "No Popover aberto, selecionar a Faixa de Almoço '3 (11h-12h)' mantendo o status 'T'.",
+        "Clicar em '🔄 Iniciar Troca de Folga neste Dia' e, em seguida, clicar no colaborador parceiro para inverter os status."
+      ],
+      "expectedResult": "O popover altera status e almoço de forma independente e a ferramenta de troca inverte os dias entre os dois colaboradores registrando auditoria.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio. Altera lançamentos da competência ativa.",
+      "requiredEvidence": [
+        "Screenshot do Popover Contextual aberto sobre a célula.",
+        "Screenshot do banner de Troca de Folga e resultado após a inversão."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-04",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Geração/Recálculo com Continuidade, Construção Manual e Detecção de Impacto Futuro",
+      "purpose": "Gerar ou recalcular a escala mensal respeitando a âncora do mês anterior, iniciar escala manual (em branco ou cópia) e detectar automaticamente impactos na escala do mês seguinte quando o fim do mês atual é alterado.",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' -> Botões '⚡ Gerar / Recalcular com Continuidade', '🛠️ Construir / Iniciar Escala Manual' e '🍽️ Equilibrar Almoços Dom.'",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "RECALCULATE_PROJECTIONS / EDIT_SCHEDULE",
+      "prerequisites": [
+        "Escala não bloqueada."
+      ],
+      "demoActions": [
+        "Selecionar a competência '2026-10' (Outubro) e alterar a folga de um colaborador 5x1 no dia 30/10.",
+        "Observar o surgimento do banner '⚠️ Impacto Detectado na Escala do Mês Seguinte (2026-11)'.",
+        "Clicar em 'Atualizar 2026-11 Agora (Preservando Manuais)'.",
+        "Abrir o modal '🛠️ Construir / Iniciar Escala Manual' para demonstrar as 3 opções de inicialização."
+      ],
+      "expectedResult": "O sistema detecta divergência de fase entre o fim de Outubro e o início de Novembro e recalcula Novembro preservando células com 'MANUAL_OVERRIDE'.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Alto se executado com a opção de sobrescrever manuais ou limpar mês sem sandbox.",
+      "requiredEvidence": [
+        "Screenshot do banner de Impacto Futuro com a lista de colaboradores afetados.",
+        "Screenshot do modal 'Construir / Iniciar Escala Manual'."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-05",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Validação de Checklist em 10 Níveis, Publicação Oficial e Reabertura Auditada",
+      "purpose": "Validar todas as regras trabalhistas e operacionais (10 níveis), publicar oficialmente a escala (bloqueando edições) e permitir reabertura formal mediante justificativa obrigatória e incremento de versão.",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' -> Botões '✅ Validar Checklist', '🔒 Publicar Escala Oficial' e '🔓 Reabrir Escala Publicada'",
+      "requiredRole": "MANAGER, ADMIN",
+      "requiredPermission": "VALIDATE_PUBLISH_SCHEDULE",
+      "prerequisites": [
+        "Para publicar: 0 erros impeditivos ('blockingErrors.length === 0').",
+        "Para reabrir: escala em status 'PUBLISHED' e justificativa >= 5 caracteres."
+      ],
+      "demoActions": [
+        "Clicar em '✅ Validar Checklist' para abrir o modal de diagnóstico em 10 níveis.",
+        "Com 0 erros bloqueantes, clicar em '🔒 Publicar Escala Oficial'.",
+        "Verificar que os pincéis e células ficam bloqueados com cadeado.",
+        "Clicar em '🔓 Reabrir Escala Publicada', digitar a justificativa 'Ajuste autorizado pela gerência regional' e confirmar."
+      ],
+      "expectedResult": "A escala muda para 'PUBLISHED' (bloqueando edições); ao reabrir, retorna para 'DRAFT', incrementa a versão para 'v2' e registra o motivo em 'versionHistory' e 'auditLogs'.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio. Altera status de governança da escala.",
+      "requiredEvidence": [
+        "Screenshot do modal de Checklist de 10 Níveis.",
+        "Screenshot da grade bloqueada ('PUBLISHED') e do modal de Reabertura com incremento de versão."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-SCHED-06",
+      "module": "ESCALA_MENSAL",
+      "componentFile": "src/modules/ScheduleGridModule.jsx",
+      "name": "Impressão Oficial da Escala em Formato Paisagem (A4 Landscape)",
+      "purpose": "Acionar a folha de estilo '@media print' para imprimir ou salvar em PDF a grade mensal limpa, sem menus laterais ou barras de botões.",
+      "accessRoute": "Sidebar -> '📅 Escalas Mensais' -> Botão '🖨️ Imprimir'",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": null,
+      "prerequisites": [
+        "Estar na tela de Escalas Mensais."
+      ],
+      "demoActions": [
+        "Clicar no botão '🖨️ Imprimir' (ou emular media='print' no navegador automatizado)."
+      ],
+      "expectedResult": "Ocultação de elementos '.no-print' (Sidebar, Topbar, Pincéis) e formatação da grade em paisagem.",
+      "dataImpact": "DATA_EXPOSURE",
+      "operationRisks": "Exposição visual/documental da escala completa; 'window.print()' bloqueia a thread JS se não for interceptado no navegador headless.",
+      "requiredEvidence": [
+        "Screenshot com emulação CSS media='print' via Playwright ('page.emulateMedia({ media: \"print\" })')."
+      ],
+      "verificationStatus": "NAO_VERIFICADA"
+    },
+    {
+      "id": "FEAT-ORG-01",
+      "module": "ESTRUTURA_ORGANIZACIONAL",
+      "componentFile": "src/modules/OrganizationAndPositionsModule.jsx",
+      "name": "Gestão da Empresa, Unidades (Lojas), Setores (com Cobertura Mínima) e Funções",
+      "purpose": "Editar dados societários da empresa (Razão Social, Nome Fantasia, CNPJ) e manter o cadastro de Filiais, Setores (incluindo cobertura mínima em dia útil e domingo) e Funções/Cargos.",
+      "accessRoute": "Sidebar -> '🏛️ Estrutura Organizacional' (activeModule = 'organization', subTab = 'structure')",
+      "requiredRole": "ADMIN",
+      "requiredPermission": "MANAGE_STRUCTURE",
+      "prerequisites": [
+        "Perfil ADMIN ativo."
+      ],
+      "demoActions": [
+        "Acessar '🏛️ Estrutura Organizacional'.",
+        "No card 'Dados Cadastrais da Empresa Principal', visualizar ou atualizar Nome Fantasia e clicar em 'Salvar Empresa'.",
+        "No card 'Setores Operacionais e Cobertura Mínima', clicar em 'Editar' no setor 'AÇOUGUE' ou criar um novo setor definindo Mín. Dia Útil e Mín. Domingo.",
+        "No card 'Catálogo de Funções / Cargos', cadastrar ou editar uma função definindo categoria funcional e custo mensal projetado."
+      ],
+      "expectedResult": "Empresa, unidades, setores e funções são atualizados imediatamente e refletidos nos seletores e cálculos de cobertura do ERP.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Alto se alterar coberturas mínimas ou desativar setores em produção sem sandbox.",
+      "requiredEvidence": [
+        "Screenshot dos 4 painéis da Estrutura Organizacional (Empresa, Unidades, Setores, Funções)."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-POS-01",
+      "module": "QUADRO_POSTOS",
+      "componentFile": "src/modules/OrganizationAndPositionsModule.jsx",
+      "name": "Quadro de Postos e Vagas: Geração Sequencial em Lote e Edição Completa de Posto",
+      "purpose": "Gerenciar as vagas autorizadas da unidade (74 postos na Loja 03), gerar múltiplos postos numerados em lote e editar atributos individuais de qualquer posto (incluindo propagação de horário/regra para o ocupante).",
+      "accessRoute": "Sidebar -> '🪑 Quadro de Postos e Vagas' (activeModule = 'positions', subTab = 'positions')",
+      "requiredRole": "MANAGER, ADMIN",
+      "requiredPermission": "CREATE_POSITIONS",
+      "prerequisites": [
+        "Perfil MANAGER ou ADMIN."
+      ],
+      "demoActions": [
+        "Acessar '🪑 Quadro de Postos e Vagas'.",
+        "No painel 'Gerador Automático de Postos por Quantidade', selecionar Setor 'CAIXA', Função 'OPERADOR DE CAIXA', Jornada, Regra '6X1 (DOM)', Quantidade '2' e clicar em '+ Gerar Postos'.",
+        "Na listagem de postos, clicar em '✏️ Editar Posto' em uma vaga existente para abrir o Modal de Edição Completa (`editingPos`).",
+        "Alterar o status da vaga ou jornada padrão e salvar."
+      ],
+      "expectedResult": "Criação sequencial de postos ('OPERADOR DE CAIXA N', 'N+1') e atualização imediata do posto e da alocação ativa do colaborador titular.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio/Alto. Altera o quadro autorizado de vagas e os indicadores de ocupação do BI.",
+      "requiredEvidence": [
+        "Screenshot do Gerador Automático de Postos.",
+        "Screenshot do Modal de Edição Completa de Posto."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-EMP-01",
+      "module": "COLABORADORES",
+      "componentFile": "src/modules/EmployeesAndAvailabilityModule.jsx",
+      "name": "Admissão Rápida de Colaborador em Vaga Aberta",
+      "purpose": "Admitir novo colaborador vinculando-o diretamente a um posto vago da unidade, preenchendo automaticamente a vaga ('FILLED') e configurando sua âncora de última folga.",
+      "accessRoute": "Sidebar -> '👥 Colaboradores' (activeModule = 'employees', subTab = 'employees')",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "MANAGE_EMPLOYEES",
+      "prerequisites": [
+        "Existir ao menos 1 vaga aberta ('vacantPositions') na unidade ativa."
+      ],
+      "demoActions": [
+        "Acessar '👥 Colaboradores'.",
+        "No formulário 'Admitir Novo Colaborador em Vaga Aberta', preencher Nome, Matrícula, Data de Admissão, selecionar um Posto Vago (ex.: 'SUB GERENTE' ou 'OPERADOR DE CAIXA') e Última Folga Âncora.",
+        "Clicar em '+ Admitir e Alocar na Vaga'."
+      ],
+      "expectedResult": "Novo colaborador adicionado com status 'ACTIVE', alocação criada herdando jornada e regra do posto, e status da vaga atualizado para 'FILLED'.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio. Altera headcount e lotação de vagas.",
+      "requiredEvidence": [
+        "Screenshot do formulário de admissão preenchido e do novo colaborador listado na tabela."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-EMP-02",
+      "module": "COLABORADORES",
+      "componentFile": "src/modules/EmployeesAndAvailabilityModule.jsx",
+      "name": "Central de Gestão do Colaborador: Promoção Guiada, Criação de Vaga Inline, Rateio Multiunidade e Histórico",
+      "purpose": "Oferecer um painel unificado por colaborador com 4 abas: (1) Dados Cadastrais e Ciclo, (2) Promoção/Transferência Guiada (incluindo criação de nova vaga inline sem sair da tela), (3) Agenda Semanal de Rateio Multiunidade e (4) Histórico Completo e Desligamento.",
+      "accessRoute": "Sidebar -> '👥 Colaboradores' -> Clicar em '⚙️ Central do Colaborador' em qualquer linha da tabela",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN (aba 'movement' exige TRANSFER_EMPLOYEES: MANAGER ou ADMIN)",
+      "requiredPermission": "MANAGE_EMPLOYEES / TRANSFER_EMPLOYEES",
+      "prerequisites": [
+        "Selecionar um colaborador ativo na lista."
+      ],
+      "demoActions": [
+        "Clicar em '⚙️ Central do Colaborador' no colaborador selecionado.",
+        "Inspecionar a Aba 1 ('1. Dados Cadastrais e Ciclo').",
+        "Clicar na Aba 2 ('2. Promoção, Transferência e Mudança de Horário/Posto') e demonstrar as 3 opções, incluindo 'Criar Nova Vaga Agora (Inline) e Promover/Transferir'.",
+        "Clicar na Aba 3 ('3. Rateio Multiunidade (Agenda Semanal)'), habilitar 'Colaborador de Rateio Compartilhado' e configurar os dias da semana por loja (`LOJA_03`, `LOJA_01`, `LOJA_02`).",
+        "Clicar na Aba 4 ('4. Histórico de Alocações e Eventos') para visualizar a trilha histórica do colaborador."
+      ],
+      "expectedResult": "A Central executa movimentações fechando a alocação anterior na véspera (`movStartDate - 1`), abrindo a nova alocação, atualizando status das vagas e salvando a agenda de rateio por dia da semana.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Alto. Modifica alocações estruturais, vagas e validação de conflitos de rateio.",
+      "requiredEvidence": [
+        "Screenshots das 4 abas internas da Central de Gestão do Colaborador (`profile`, `movement`, `rateio`, `history`)."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-VAC-01",
+      "module": "FERIAS_AFASTAMENTOS",
+      "componentFile": "src/modules/EmployeesAndAvailabilityModule.jsx",
+      "name": "Programação e Edição de Férias, Licença Maternidade, INSS e Aviso Prévio com Recálculo Dinâmico",
+      "purpose": "Registrar, editar ou remover eventos de indisponibilidade configurando o comportamento do ciclo no retorno (RESET_ON_RETURN vs PRESERVE_PHASE) e atualizando automaticamente o status do colaborador e a grade mensal.",
+      "accessRoute": "Sidebar -> '🏖️ Férias e Afastamentos' (activeModule = 'vacations', subTab = 'availability')",
+      "requiredRole": "OPERATOR, MANAGER, ADMIN",
+      "requiredPermission": "MANAGE_UNAVAILABILITY",
+      "prerequisites": [
+        "Existir colaborador cadastrado na unidade."
+      ],
+      "demoActions": [
+        "Acessar '🏖️ Férias e Afastamentos'.",
+        "Selecionar um colaborador, Tipo de Evento 'Férias Programadas (VACATION)', período '2026-11-10' a '2026-11-24' e comportamento no retorno 'Reiniciar Ciclo no Retorno (RESET_ON_RETURN)'.",
+        "Clicar em '+ Registrar Evento e Atualizar Escala'.",
+        "Clicar em '✏️ Editar' no evento criado para demonstrar a edição e, depois, em '🗑️ Remover' para demonstrar a restauração automática do status 'ACTIVE'."
+      ],
+      "expectedResult": "Durante a vigência, o status do colaborador muda dinamicamente para 'ON_VACATION' e os dias na grade de Novembro recebem 'V' (FÉRIAS); ao remover o evento, o status retorna a 'ACTIVE' e os dias voltam ao cálculo normal.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio/Alto. Sobrescreve os dias do período na escala mensal.",
+      "requiredEvidence": [
+        "Screenshot do formulário de Férias/Afastamentos e da tabela de eventos registrados.",
+        "Evidência na grade mensal mostrando as células preenchidas com 'FÉR' ('V')."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-RULE-01",
+      "module": "MOTOR_DE_REGRAS",
+      "componentFile": "src/modules/RulesShiftsAndCalendarModule.jsx",
+      "name": "Catálogo e Calculadora Aritmética de Jornadas Contratuais (8 Colunas)",
+      "purpose": "Criar, editar, duplicar e validar aritmética e legalmente as 8 colunas de horário contratual (Entrada, Início Int., Fim Int., Saída Base, C.H. Base, Complemento, Saída Real, C.H. Contratual), incluindo turnos noturnos que cruzam meia-noite.",
+      "accessRoute": "Sidebar -> '⏱️ Jornadas e Regras' (activeModule = 'rules_shifts', subTab = 'rules')",
+      "requiredRole": "ADMIN",
+      "requiredPermission": "MANAGE_RULES_SHIFTS",
+      "prerequisites": [
+        "Perfil ADMIN ativo."
+      ],
+      "demoActions": [
+        "Acessar '⏱️ Jornadas e Regras'.",
+        "No formulário de Jornadas Contratuais (8 Colunas), alterar os horários de entrada/intervalo/saída e observar o painel de diagnóstico aritmético em tempo real.",
+        "Clicar em '⚡ Auto-Calcular Cargas Horárias' para sincronizar as colunas 5, 6 e 8.",
+        "Na tabela de jornadas, clicar em '📋 Duplicar' ou '✏️ Editar' em uma jornada existente."
+      ],
+      "expectedResult": "O validador calcula em tempo real os minutos de intervalo intrajornada, carga base e prorrogação, exibindo alerta caso haja divergência aritmética ou intervalo < 1h em jornada > 6h.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Médio. Altera catálogo de horários usado nos cálculos de interjornada 11h e carga mensal.",
+      "requiredEvidence": [
+        "Screenshot do formulário de 8 colunas com o card de diagnóstico aritmético verde ('✓ Aritmética das 8 colunas consistente')."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-RULE-02",
+      "module": "MOTOR_DE_REGRAS",
+      "componentFile": "src/modules/RulesShiftsAndCalendarModule.jsx",
+      "name": "Motor de Regras de Escala em 2 Níveis (Modo Simples com Preview 14 Dias e Modo Avançado) + Vigência Temporal",
+      "purpose": "Configurar regras de escala (5x1, 5x2 Fixo/Rotativo, 6x1 Dom, 6x1 Flex) usando templates guiados com visualização de 14 dias ou parâmetros avançados, além de atribuir regras com vigência temporal por colaborador.",
+      "accessRoute": "Sidebar -> '⏱️ Jornadas e Regras' -> Seção 'Motor de Regras de Escala (2 Níveis)'",
+      "requiredRole": "ADMIN",
+      "requiredPermission": "MANAGE_RULES_SHIFTS",
+      "prerequisites": [
+        "Perfil ADMIN ativo."
+      ],
+      "demoActions": [
+        "Na seção 'Motor de Regras de Escala', selecionar 'Modo Simples (Templates Guiados)', escolher um template (ex.: '5x2 Corrido Rotativo') e inspecionar o Simulador Visual de 14 Dias.",
+        "Alternar para 'Modo Avançado (Parametrização Completa)' para exibir os controles de dias consecutivos e janelas de folga.",
+        "Na seção 'Exceção / Mudança de Regra com Vigência Temporal', vincular uma regra temporária a um colaborador com data de início e fim."
+      ],
+      "expectedResult": "Criação/edição de regras no catálogo e registro de vigência temporal (`ruleAssignments`) respeitada pelo gerador de escalas.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Alto se alterar regras base utilizadas por múltiplos postos sem sandbox.",
+      "requiredEvidence": [
+        "Screenshot do Modo Simples com Preview de 14 dias.",
+        "Screenshot do Modo Avançado e da tabela de Vigências Temporais."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-CAL-01",
+      "module": "CALENDARIO_OPERACIONAL",
+      "componentFile": "src/modules/RulesShiftsAndCalendarModule.jsx",
+      "name": "Calendário Operacional do Mercado (Feriados, Meio Expediente e Fechamento por Loja)",
+      "purpose": "Configurar feriados nacionais/locais e modos de abertura da loja (FULL_DAY, HALF_DAY com horário limite, CLOSED) com propagação automática para a escala mensal.",
+      "accessRoute": "Sidebar -> '🗓️ Calendário Operacional' (activeModule = 'calendar', subTab = 'calendar')",
+      "requiredRole": "MANAGER, ADMIN",
+      "requiredPermission": "MANAGE_MARKET_CALENDAR",
+      "prerequisites": [
+        "Perfil MANAGER ou ADMIN."
+      ],
+      "demoActions": [
+        "Acessar '🗓️ Calendário Operacional'.",
+        "Inspecionar os feriados de Novembro/2026 da Loja 03 (02/11 Dia de Finados Meio Expediente até 13:00, 15/11 Proclamação da República, 20/11 Consciência Negra).",
+        "Clicar em '✏️ Editar' em um feriado ou cadastrar uma nova data especial configurando 'Meio Expediente (HALF_DAY)' ou 'Mercado Fechado (CLOSED)'."
+      ],
+      "expectedResult": "O calendário filtra os dias pela unidade ativa e propaga automaticamente 'FECHADO' ou 'MEIO_EXP' para as células da escala naquela data.",
+      "dataImpact": "MUTATES_STATE_AND_DB",
+      "operationRisks": "Alto quando configurado como 'CLOSED' ou 'HALF_DAY', pois altera em massa os lançamentos daquele dia na escala.",
+      "requiredEvidence": [
+        "Screenshot do formulário e da tabela do Calendário Operacional da Loja 03."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    },
+    {
+      "id": "FEAT-ADMIN-01",
+      "module": "ADMIN_RBAC",
+      "componentFile": "src/modules/AdminAndAuditModule.jsx",
+      "name": "Governança RBAC, Cadastro de Operadores por Unidade, Backup JSON e Trilha de Auditoria Verificada",
+      "purpose": "Gerenciar operadores autorizados e suas filiais permitidas, simular perfis RBAC (ADMIN, MANAGER, OPERATOR, VIEWER), exportar backup JSON, restaurar base oficial da Loja 03 e auditar todas as ações com distinção de autoria verificada vs legado.",
+      "accessRoute": "Sidebar -> '🔐 Administração e Auditoria' (activeModule = 'admin')",
+      "requiredRole": "VIEWER, OPERATOR, MANAGER, ADMIN (Cadastro de operadores exige MANAGE_USERS: ADMIN; Restaurar Seed exige MANAGE_STRUCTURE: ADMIN)",
+      "requiredPermission": "MANAGE_USERS / MANAGE_STRUCTURE",
+      "prerequisites": [
+        "Estar autenticado no sistema."
+      ],
+      "demoActions": [
+        "Acessar '🔐 Administração e Auditoria'.",
+        "No seletor de Simulação de Perfil RBAC, alternar de 'ADMIN' para 'VIEWER' e tentar executar uma edição para demonstrar o bloqueio RBAC com Toast de erro.",
+        "Retornar o perfil para 'ADMIN'.",
+        "No painel 'Cadastro de Operadores e Autorização por Unidade', cadastrar um operador 'MANAGER' autorizado apenas para 'LOJA 03'.",
+        "Na 'Trilha de Auditoria Verificada', filtrar por módulo e por status de verificação ('VERIFIED_OPERATOR_SESSION', 'SYSTEM_SEED')."
+      ],
+      "expectedResult": "O simulador RBAC bloqueia imediatamente ações não autorizadas para perfis restritos, o cadastro de operadores persiste em 'userProfiles' e a tabela de auditoria exibe todos os metadados de autoria e revisão de schema.",
+      "dataImpact": "MUTATES_STATE_AND_DB / DESTRUCTIVE_RESET / DATA_EXPORT",
+      "operationRisks": "Crítico no botão '🔄 Restaurar Base Oficial Loja 03' (sobrescreve todo o banco) e alto em '💾 Exportar Backup Completo (JSON)' (exporta dados pessoais/corporativos).",
+      "requiredEvidence": [
+        "Screenshot dos chips de permissão mudando ao alternar entre ADMIN, MANAGER, OPERATOR e VIEWER.",
+        "Screenshot do Toast de bloqueio RBAC ao tentar editar como VIEWER.",
+        "Screenshot da tabela de Trilha de Auditoria Verificada."
+      ],
+      "verificationStatus": "PARCIALMENTE CONFIRMADA"
+    }
+  ]
+}

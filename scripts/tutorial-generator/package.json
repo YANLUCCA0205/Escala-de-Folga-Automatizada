@@ -1,0 +1,17 @@
+{
+  "name": "autotour-ai-tutorial-generator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Motor isolado AutoTour AI para exploração visual segura e geração de vídeos tutoriais do Workforce ERP v8.0",
+  "scripts": {
+    "explore": "node explorer/visualExplorer.js",
+    "pilot": "node index.js --video VID-02",
+    "all": "node index.js --explore --video VID-02"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "msedge-tts": "^2.0.4",
+    "playwright-core": "^1.51.0"
+  }
+}
