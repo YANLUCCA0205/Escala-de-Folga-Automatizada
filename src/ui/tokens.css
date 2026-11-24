@@ -1,0 +1,167 @@
+/* =============================================================================
+   DESIGN TOKENS INSTITUCIONAIS — WORKFORCE ERP UNIÃO SUPERMERCADOS (v9.0)
+   Fonte oficial: Manual de Identidade Visual União Supermercados
+     • Azul União     : #2B5690 | RGB(43, 86, 144)  | Pantone 293 C
+     • Vermelho União : #E9403C | RGB(233, 64, 60)  | Pantone 485 C
+     • Tipografia     : Montserrat (400, 500, 600, 700)
+   ============================================================================= */
+
+:root {
+  /* Tipografia */
+  --erp-font-sans: 'Montserrat', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  --erp-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --erp-text-xs: 0.75rem;     /* 12px — mínimo permitido para rótulos auxiliares e células compactas */
+  --erp-text-sm: 0.8125rem;   /* 13px — corpo operacional padrão de alta densidade */
+  --erp-text-md: 0.875rem;    /* 14px — subtítulos e cabeçalhos de seção */
+  --erp-text-lg: 1rem;        /* 16px — títulos de painel e diálogos */
+  --erp-text-xl: 1.25rem;     /* 20px — títulos de página */
+  --erp-text-2xl: 1.5rem;     /* 24px — indicadores principais (KPIs) */
+
+  /* Cores Institucionais (Manual da Marca) */
+  --erp-brand-blue: #2B5690;
+  --erp-brand-blue-hover: #224678;
+  --erp-brand-blue-active: #1B3963;
+  --erp-brand-blue-deep: #142B4D;
+  --erp-brand-blue-soft: #EDF3FA;
+  --erp-brand-blue-border: #C4D6EC;
+
+  --erp-brand-red: #E9403C;
+  --erp-brand-red-hover: #D12F2B;
+  --erp-brand-red-soft: #FEF2F2;
+  --erp-brand-red-border: #FECACA;
+
+  /* Superfícies Neutras Corporativas (Tema Padrão: Institucional) */
+  --erp-bg-canvas: #F3F5F8;
+  --erp-surface: #FFFFFF;
+  --erp-surface-subtle: #F8FAFC;
+  --erp-surface-muted: #EEF2F6;
+  --erp-surface-hover: #F1F5F9;
+
+  /* Bordas */
+  --erp-border: #DDE3EC;
+  --erp-border-strong: #C2CDD9;
+  --erp-border-subtle: #EAEFF5;
+
+  /* Texto */
+  --erp-ink: #0F1E36;
+  --erp-ink-secondary: #3B4E68;
+  --erp-ink-muted: #64748B;
+  --erp-ink-inverse: #FFFFFF;
+
+  /* Ação Primária e Foco */
+  --erp-primary: #2B5690;
+  --erp-primary-hover: #224678;
+  --erp-primary-text: #FFFFFF;
+  --erp-focus-ring: #2B5690;
+
+  /* Navegação Lateral */
+  --erp-sidebar-bg: #142B4D;
+  --erp-sidebar-surface: #1B3963;
+  --erp-sidebar-border: #254778;
+  --erp-sidebar-text: #E2E8F0;
+  --erp-sidebar-muted: #94A8C4;
+  --erp-sidebar-hover: rgba(255, 255, 255, 0.06);
+  --erp-sidebar-active-bg: rgba(255, 255, 255, 0.11);
+  --erp-sidebar-active-text: #FFFFFF;
+  --erp-sidebar-accent: #E9403C;
+
+  /* Cabeçalho Global e Tabelas */
+  --erp-header-bg: #FFFFFF;
+  --erp-header-border: #DDE3EC;
+  --erp-table-header-bg: #F1F5F9;
+  --erp-table-header-sub: #E8EEF5;
+  --erp-table-header-text: #1E293B;
+  --erp-table-row-hover: #F8FAFC;
+
+  /* Estados Semânticos */
+  --erp-success: #15803D;
+  --erp-success-soft: #F0FDF4;
+  --erp-success-border: #BBF7D0;
+
+  --erp-warning: #B45309;
+  --erp-warning-soft: #FFFBEB;
+  --erp-warning-border: #FDE68A;
+
+  --erp-danger: #C81E1E;
+  --erp-danger-hover: #A81818;
+  --erp-danger-soft: #FEF2F2;
+  --erp-danger-border: #FECACA;
+
+  --erp-info: #1D4ED8;
+  --erp-info-soft: #EFF6FF;
+  --erp-info-border: #BFDBFE;
+
+  /* Espaçamento (grade 4px) e Dimensões */
+  --erp-space-1: 4px;
+  --erp-space-2: 8px;
+  --erp-space-3: 12px;
+  --erp-space-4: 16px;
+  --erp-space-5: 20px;
+  --erp-space-6: 24px;
+  --erp-space-8: 32px;
+
+  --erp-radius-xs: 2px;
+  --erp-radius-sm: 4px;
+  --erp-radius-md: 6px;
+  --erp-radius-lg: 8px;
+
+  --erp-control-sm: 28px;
+  --erp-control-md: 34px;
+  --erp-control-lg: 40px;
+
+  --erp-sidebar-width: 256px;
+  --erp-sidebar-collapsed-width: 60px;
+  --erp-header-height: 52px;
+
+  /* Sombras restritas exclusivamente a camadas flutuantes (popovers, drawers, diálogos) */
+  --erp-shadow-popover: 0 6px 18px rgba(15, 30, 54, 0.12), 0 1px 3px rgba(15, 30, 54, 0.08);
+  --erp-shadow-dialog: 0 18px 42px rgba(15, 30, 54, 0.22), 0 2px 6px rgba(15, 30, 54, 0.10);
+
+  /* Ponte de compatibilidade com módulos existentes (--uniao-*) */
+  --uniao-font: var(--erp-font-sans);
+  --uniao-red: var(--erp-brand-red);
+  --uniao-red-hover: var(--erp-brand-red-hover);
+  --uniao-red-soft: var(--erp-brand-red-soft);
+  --uniao-blue: var(--erp-brand-blue);
+  --uniao-blue-hover: var(--erp-brand-blue-hover);
+  --uniao-blue-deep: var(--erp-brand-blue-deep);
+  --uniao-blue-soft: var(--erp-brand-blue-soft);
+  --uniao-app-bg: var(--erp-bg-canvas);
+  --uniao-card-bg: var(--erp-surface);
+  --uniao-surface-subtle: var(--erp-surface-subtle);
+  --uniao-border: var(--erp-border);
+  --uniao-border-strong: var(--erp-border-strong);
+  --uniao-text-primary: var(--erp-ink);
+  --uniao-text-secondary: var(--erp-ink-secondary);
+  --uniao-text-muted: var(--erp-ink-muted);
+  --uniao-sidebar-bg: var(--erp-sidebar-bg);
+  --uniao-sidebar-solid: var(--erp-sidebar-bg);
+  --uniao-sidebar-border: var(--erp-sidebar-border);
+  --uniao-sidebar-text: var(--erp-sidebar-text);
+  --uniao-sidebar-muted: var(--erp-sidebar-muted);
+  --uniao-sidebar-item-active-bg: var(--erp-sidebar-active-bg);
+  --uniao-sidebar-item-active-text: var(--erp-sidebar-active-text);
+  --uniao-sidebar-item-active-border: var(--erp-sidebar-accent);
+  --uniao-sidebar-box-bg: var(--erp-sidebar-surface);
+  --uniao-btn-primary-bg: var(--erp-primary);
+  --uniao-btn-primary-text: var(--erp-primary-text);
+  --uniao-btn-secondary-bg: var(--erp-surface);
+  --uniao-btn-secondary-text: var(--erp-ink);
+  --uniao-btn-secondary-border: var(--erp-border-strong);
+  --uniao-tab-active-bg: var(--erp-primary);
+  --uniao-tab-active-text: var(--erp-primary-text);
+  --uniao-tab-active-border: var(--erp-primary);
+  --uniao-table-header-bg: var(--erp-brand-blue);
+  --uniao-table-header-sub: var(--erp-brand-blue-active);
+  --uniao-table-header-text: #FFFFFF;
+  --uniao-sticky-accent: var(--erp-brand-blue);
+  --uniao-login-bg: var(--erp-brand-blue-deep);
+  --uniao-top-strip: var(--erp-brand-blue);
+}
+
+[data-erp-density="compact"] {
+  --erp-control-sm: 26px;
+  --erp-control-md: 30px;
+  --erp-control-lg: 36px;
+}
