@@ -305,6 +305,146 @@ export default function ScheduleGridModule({
     if (isLockedPublished) return;
     pushUndoSnapshot("Gerar Escala com Continuidade");
 
+    // Pré-avalia quantos lançamentos da unidade existem e quantos estão marcados como MANUAL_OVERRIDE
+    const existingUnitEntries = monthEntries.filter(
+      (e) => !e.unitId || e.unitId === selectedUnitId
+    );
+    const hasEmptyCells = existingUnitEntries.some((e) => e.status === "EMPTY");
+    const nonEmptyManualEntries = existingUnitEntries.filter(
+      (e) =>
+        e.origin === "MANUAL_OVERRIDE" &&
+        !["EMPTY", "V", "LM", "INSS", "ADM", "DEM", "FECHADO"].includes(e.status)
+    );
+    const totalOperationalEntries = existingUnitEntries.filter(
+      (e) => !["V", "LM", "INSS", "ADM", "DEM", "FECHADO"].includes(e.status)
+    );
+
+    // Se a grade foi convertida integralmente em rascunho manual (CONVERT_DRAFT / COPY)
+    // e não há células vazias pendentes, preservar 100% das células congelaria a geração.
+    const allConvertedToManual =
+      !hasEmptyCells &&
+      totalOperationalEntries.length > 0 &&
+      nonEmptyManualEntries.length >= Math.floor(totalOperationalEntries.length * 0.85);
+
+    const initialPreserve = preserveManual && !allConvertedToManual;
+
+    // Simula a geração para medir quantas células mudam e exibir resumo operacional preciso
+    const computeGenerationForDraft = (draft, shouldPreserve) => {
+      const prevAll = draft.dailyEntriesByMonth[prevYearMonth] || [];
+      const existingCur = draft.dailyEntriesByMonth[selectedYearMonth] || [];
+      const otherUnitsEntries = existingCur.filter(
+        (e) => e.unitId && e.unitId !== selectedUnitId
+      );
+      const unitGeneratedEntries = [];
+      const nextCycleStates = (draft.cycleStates || []).filter(
+        (cs) => !(cs.yearMonth === selectedYearMonth)
+      );
+
+      draft.employees.forEach((emp, empIdx) => {
+        const empPrev = prevAll.filter((e) => e.employeeId === emp.id);
+        const empCurManualMap = {};
+        if (shouldPreserve) {
+          existingCur
+            .filter(
+              (e) =>
+                e.employeeId === emp.id &&
+                e.origin === "MANUAL_OVERRIDE" &&
+                e.status !== "EMPTY"
+            )
+            .forEach((e) => {
+              empCurManualMap[e.workDate] = e;
+            });
+        }
+
+        const prevCycle = (draft.cycleStates || []).find(
+          (cs) => cs.employeeId === emp.id && cs.yearMonth === prevYearMonth
+        );
+
+        const res = generateEmployeeScheduleForMonth({
+          employee: emp,
+          yearMonth: selectedYearMonth,
+          allocations: draft.allocations,
+          ruleAssignments: draft.ruleAssignments || [],
+          rulesById,
+          unavailabilityEvents: draft.unavailabilityEvents,
+          marketCalendarByDate,
+          previousMonthEntries: empPrev,
+          previousCycleState: prevCycle || null,
+          employeeRotationRank: empIdx,
+          existingManualEntriesByDate: empCurManualMap,
+          preserveManualOverrides: shouldPreserve,
+        });
+
+        unitGeneratedEntries.push(
+          ...res.entries.filter((e) => !e.unitId || e.unitId === selectedUnitId)
+        );
+        nextCycleStates.push({
+          ...res.endCycleState,
+          yearMonth: selectedYearMonth,
+        });
+      });
+
+      const balancedAll = balanceSectorSundayLunchSlots({
+        entries: [...otherUnitsEntries, ...unitGeneratedEntries],
+        allocations: draft.allocations,
+        shiftsById,
+        preserveManual: shouldPreserve,
+      });
+
+      const prevByEmpDate = new Map(
+        existingCur
+          .filter((e) => !e.unitId || e.unitId === selectedUnitId)
+          .map((e) => [`${e.employeeId}_${e.workDate}`, e])
+      );
+
+      let changedCellsCount = 0;
+      let restCount = 0;
+      let sundayIntervalCount = 0;
+      const processedEmployees = new Set();
+
+      for (const entry of balancedAll) {
+        if (entry.unitId && entry.unitId !== selectedUnitId) continue;
+        processedEmployees.add(entry.employeeId);
+        if (entry.status === "F" || entry.status === "A") restCount += 1;
+        if (entry.lunchSlot) sundayIntervalCount += 1;
+        const old = prevByEmpDate.get(`${entry.employeeId}_${entry.workDate}`);
+        if (
+          !old ||
+          old.status !== entry.status ||
+          (old.lunchSlot || null) !== (entry.lunchSlot || null)
+        ) {
+          changedCellsCount += 1;
+        }
+      }
+
+      return {
+        balancedAll,
+        nextCycleStates,
+        changedCellsCount,
+        restCount,
+        sundayIntervalCount,
+        employeesCount: processedEmployees.size,
+        effectivePreserve: shouldPreserve,
+      };
+    };
+
+    // Pré-calcula sobre o estado atual para determinar o resumo e se há necessidade de fallback integral
+    let previewResult = computeGenerationForDraft(db, initialPreserve);
+    if (
+      initialPreserve &&
+      previewResult.changedCellsCount === 0 &&
+      nonEmptyManualEntries.length > 0
+    ) {
+      // Quando os únicos desvios da grade em relação ao motor são células manuais anteriores,
+      // recalcula integralmente a continuidade de prevYearMonth (mantendo snapshot no botão Desfazer).
+      previewResult = computeGenerationForDraft(db, false);
+    }
+
+    const summaryText =
+      previewResult.changedCellsCount > 0
+        ? `Escala de ${selectedYearMonth} gerada com continuidade de ${prevYearMonth}: ${previewResult.changedCellsCount} célula(s) atualizada(s) (${previewResult.employeesCount} colaboradores · ${previewResult.restCount} folgas · ${previewResult.sundayIntervalCount} intervalos).`
+        : `Escala de ${selectedYearMonth} recalculada com continuidade de ${prevYearMonth}: todos os ${previewResult.employeesCount} colaboradores (${previewResult.restCount} folgas e ${previewResult.sundayIntervalCount} intervalos) já estavam sincronizados com a regra.`;
+
     onMutateDb({
       permission: "RECALCULATE_PROJECTIONS",
       module: "ESCALA_MENSAL",
@@ -313,60 +453,11 @@ export default function ScheduleGridModule({
       entityId: `${selectedUnitId}_${selectedYearMonth}`,
       unitId: selectedUnitId,
       yearMonth: selectedYearMonth,
-      summary: `Gerada/Recalculada escala de ${selectedYearMonth} (${selectedUnitId}) utilizando continuidade histórica de ${prevYearMonth} (${preserveManual ? "preservando edições manuais" : "recalculando integralmente"}).`,
+      summary: summaryText,
       updater: (draft) => {
-        const prevAll = draft.dailyEntriesByMonth[prevYearMonth] || [];
-        const existingCur = draft.dailyEntriesByMonth[selectedYearMonth] || [];
-        const otherUnitsEntries = existingCur.filter(
-          (e) => e.unitId && e.unitId !== selectedUnitId
-        );
-        const newMonthList = [...otherUnitsEntries];
-
-        draft.employees.forEach((emp, empIdx) => {
-          const empPrev = prevAll.filter((e) => e.employeeId === emp.id);
-          const empCurManualMap = {};
-          existingCur
-            .filter((e) => e.employeeId === emp.id && e.origin === "MANUAL_OVERRIDE")
-            .forEach((e) => {
-              empCurManualMap[e.workDate] = e;
-            });
-
-          const prevCycle = (draft.cycleStates || []).find(
-            (cs) => cs.employeeId === emp.id && cs.yearMonth === prevYearMonth
-          );
-
-          const res = generateEmployeeScheduleForMonth({
-            employee: emp,
-            yearMonth: selectedYearMonth,
-            allocations: draft.allocations,
-            ruleAssignments: draft.ruleAssignments || [],
-            rulesById,
-            unavailabilityEvents: draft.unavailabilityEvents,
-            marketCalendarByDate,
-            previousMonthEntries: empPrev,
-            previousCycleState: prevCycle || null,
-            employeeRotationRank: empIdx,
-            existingManualEntriesByDate: empCurManualMap,
-            preserveManualOverrides: preserveManual,
-          });
-
-          newMonthList.push(...res.entries.filter((e) => !e.unitId || e.unitId === selectedUnitId));
-
-          draft.cycleStates = (draft.cycleStates || []).filter(
-            (cs) => !(cs.employeeId === emp.id && cs.yearMonth === selectedYearMonth)
-          );
-          draft.cycleStates.push({
-            ...res.endCycleState,
-            yearMonth: selectedYearMonth,
-          });
-        });
-
-        draft.dailyEntriesByMonth[selectedYearMonth] = balanceSectorSundayLunchSlots({
-          entries: newMonthList,
-          allocations: draft.allocations,
-          shiftsById,
-          preserveManual,
-        });
+        const applied = computeGenerationForDraft(draft, previewResult.effectivePreserve);
+        draft.dailyEntriesByMonth[selectedYearMonth] = applied.balancedAll;
+        draft.cycleStates = applied.nextCycleStates;
 
         const existingHeader = draft.monthlySchedules.find(
           (ms) => ms.unitId === selectedUnitId && ms.yearMonth === selectedYearMonth
@@ -374,6 +465,7 @@ export default function ScheduleGridModule({
         if (existingHeader) {
           existingHeader.status = "DRAFT";
           existingHeader.impactWarning = null;
+          existingHeader.lastGeneratedAt = new Date().toISOString();
         } else {
           draft.monthlySchedules.push({
             id: `MS_${selectedUnitId}_${selectedYearMonth}`,
@@ -383,6 +475,7 @@ export default function ScheduleGridModule({
             versionNumber: 1,
             versionHistory: [],
             impactWarning: null,
+            lastGeneratedAt: new Date().toISOString(),
           });
         }
       },
@@ -669,7 +762,7 @@ export default function ScheduleGridModule({
                 sectorId: alloc.sectorId,
                 workDate: isoDate,
                 status: preservedStatus || "EMPTY",
-                origin: preservedStatus ? "AUTO_GENERATED" : "MANUAL_OVERRIDE",
+                origin: preservedStatus ? "AUTO_GENERATED" : "MANUAL_EMPTY_DRAFT",
                 lunchSlot: null,
                 ruleId: alloc.scheduleRuleId,
               });
@@ -769,7 +862,7 @@ export default function ScheduleGridModule({
             ...e,
             status: "EMPTY",
             lunchSlot: null,
-            origin: "MANUAL_OVERRIDE",
+            origin: "MANUAL_EMPTY_DRAFT",
           };
         });
         const ms = draft.monthlySchedules.find(
@@ -1431,9 +1524,16 @@ export default function ScheduleGridModule({
                   onClick: () => handleGenerateMonthSchedule(true),
                 },
                 {
+                  id: "gen_cont_full",
+                  icon: "refresh",
+                  label: `Recalcular competência do zero (${prevYearMonth})`,
+                  onClick: () => handleGenerateMonthSchedule(false),
+                },
+                { separator: true },
+                {
                   id: "lunch_bal",
                   icon: "clock",
-                  label: "Balancear intervalos de domingo",
+                  label: "Balancear intervalos de domingo (1 a 4)",
                   onClick: handleRebalanceSundayLunch,
                 },
                 {
@@ -1767,6 +1867,35 @@ export default function ScheduleGridModule({
           </div>
         )}
       </div>
+
+      {monthEntries.length === 0 && sectorsToRender.length > 0 && !isLockedPublished && (
+        <div
+          className="erp-alert erp-alert--info no-print"
+          style={{
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 10,
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700 }}>
+              Competência {selectedYearMonth} ainda não possui lançamentos gerados para esta unidade
+            </div>
+            <div style={{ fontSize: 12 }}>
+              Gere automaticamente a escala aplicando as regras de trabalho, folgas, intervalos de domingo e continuidade histórica de <strong>{prevYearMonth}</strong>.
+            </div>
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            icon="refresh"
+            onClick={() => handleGenerateMonthSchedule(false)}
+          >
+            Gerar escala com continuidade ({prevYearMonth})
+          </Button>
+        </div>
+      )}
 
       {impactReport && (
         <div
@@ -2258,7 +2387,8 @@ export default function ScheduleGridModule({
                               }
 
                               const entry = entriesByEmpDate[emp.id]?.[d];
-                              const st = entry?.status || "T";
+                              const st =
+                                entry?.status || (monthEntries.length === 0 ? "EMPTY" : "T");
                               const dow = getDayOfWeekISO(d);
                               const mDay = marketCalendarByDate[d];
                               const isSunOrHoliday = dow === 0 || Boolean(mDay);

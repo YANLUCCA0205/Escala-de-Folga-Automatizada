@@ -304,7 +304,7 @@ test("PRT-02: Nova representação visual das células (Trabalho branco sem T, F
         checkedNormalWorkWhite = true;
       }
       if (cell.status === "F" || cell.status === "A") {
-        assert.equal(cell.isRest, true);
+        assert.equal(cell.isBlackRest, true);
         assert.equal(cell.bgHex, "#000000", "Folga é representada por célula 100% preta");
         assert.equal(cell.displayText, "");
         checkedRestBlack = true;
@@ -316,15 +316,15 @@ test("PRT-02: Nova representação visual das células (Trabalho branco sem T, F
       }
     }
 
-    for (const seg of row.segments) {
+    for (const seg of row.cellSpans) {
       if (seg.isSpan && seg.status === "V") {
         assert.equal(seg.spanLength, 20);
-        assert.equal(seg.spanLabel, "FÉRIAS — 05/11 A 24/11");
+        assert.equal(seg.displayText, "FÉRIAS — 05/11 A 24/11");
         checkedVacationSpan = true;
       }
       if (seg.isSpan && seg.status === "INSS") {
         assert.equal(seg.spanLength, 30);
-        assert.equal(seg.spanLabel, "AFASTAMENTO INSS — 01/11 A 30/11");
+        assert.equal(seg.displayText, "AFASTAMENTO INSS — 01/11 A 30/11");
         checkedInssSpan = true;
       }
     }
@@ -345,9 +345,10 @@ test("PRT-02: Nova representação visual das células (Trabalho branco sem T, F
 
   assert.equal(day01Sun.headerTone, "sunday");
   assert.equal(day02Hol.headerTone, "holiday");
-  assert.equal(day03Wk.headerTone, "weekday");
+  assert.equal(day03Wk.headerTone, "normal");
   assert.equal(day07Peak.headerTone, "special_peak");
-  assert.equal(day15Half.headerTone, "half");
+  assert.equal(day15Half.headerTone, "holiday");
+  assert.equal(day15Half.headerSubTag, "1/2");
 });
 
 test("PRT-03: Paginação vertical com 54 colaboradores distribui em múltiplas páginas, repete cabeçalhos, marca '(continuação)' e nunca divide linhas ou deixa setor órfão", () => {
@@ -509,8 +510,8 @@ test("SDB-01: Existe EXCLUSIVAMENTE UM controle de alternância da barra lateral
       createElement(SchedulePrintSheet, { doc, page: doc.pages[0] })
     );
 
-    assert.ok(sheetHtml.includes("erp-print-rest-black-cell"), "Células de folga usam classe preta sólida");
-    assert.ok(sheetHtml.includes('colspan="20"'), "Período de férias consecutivo usa colSpan horizontal");
+    assert.ok(sheetHtml.includes("erp-print-day-cell--rest-black"), "Células de folga usam classe preta sólida");
+    assert.ok(/colspan="20"/i.test(sheetHtml), "Período de férias consecutivo usa colSpan horizontal");
     assert.ok(sheetHtml.includes("FÉRIAS — 05/11 A 24/11"));
     assert.ok(sheetHtml.includes("AFASTAMENTO INSS — 01/11 A 30/11"));
     assert.equal(sheetHtml.includes("I-1"), false);

@@ -594,17 +594,19 @@ export default function App() {
           aria-live="polite"
           style={{
             position: "fixed",
-            bottom: 18,
+            top: 62,
             right: 22,
             zIndex: 3000,
-            background: toastMsg.type === "err" ? "var(--erp-danger)" : "var(--erp-ink)",
+            background: toastMsg.type === "err" ? "var(--erp-danger)" : "#0F1E36",
             color: "#FFFFFF",
-            padding: "10px 16px",
+            borderLeft: `4px solid ${toastMsg.type === "err" ? "#FCA5A5" : "#22C55E"}`,
+            padding: "11px 16px",
             borderRadius: 6,
-            fontSize: 13,
+            fontSize: 12.5,
             fontWeight: 600,
-            boxShadow: "var(--erp-shadow-popover)",
-            maxWidth: 460,
+            lineHeight: 1.4,
+            boxShadow: "0 12px 28px rgba(15, 23, 42, 0.28)",
+            maxWidth: 480,
           }}
         >
           {toastMsg.text}

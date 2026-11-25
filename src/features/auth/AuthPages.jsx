@@ -6,7 +6,7 @@
 //   2. Painel Funcional (acesso restrito, sem cadastro público, sem seletor RBAC)
 // =============================================================================
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import UniaoLogo from "../../components/UniaoLogo.jsx";
 import { evaluatePassword } from "../../domain/passwordPolicy.js";
 import {
@@ -515,25 +515,21 @@ export function MfaEnrollPage({ environmentLabel, onStart, onVerify, onSignOut, 
   const [code, setCode] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [loadingInit, setLoadingInit] = useState(true);
+  const startedRef = useRef(false);
 
   useEffect(() => {
-    let active = true;
+    if (startedRef.current) return undefined;
+    startedRef.current = true;
     onStart()
       .then((data) => {
-        if (active) {
-          setEnrollment(data);
-          setLoadingInit(false);
-        }
+        setEnrollment(data);
+        setLoadingInit(false);
       })
       .catch((err) => {
-        if (active) {
-          setErrorMsg(err?.message || "Falha ao gerar chave MFA.");
-          setLoadingInit(false);
-        }
+        setErrorMsg(err?.message || "Falha ao gerar chave MFA.");
+        setLoadingInit(false);
       });
-    return () => {
-      active = false;
-    };
+    return undefined;
   }, [onStart]);
 
   const handleSubmit = async (e) => {
