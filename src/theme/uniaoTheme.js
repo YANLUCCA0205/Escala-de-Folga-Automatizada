@@ -57,7 +57,7 @@ export const UNIAO_BRAND_MANUAL = {
     LOJA_01: {
       code: "LJ01",
       name: "LOJA 01",
-      address: "Av. Brasil, 740",
+      address: "Av. Brasil, 755",
       city: "Conceição das Alagoas",
       state: "MG",
       phone: "(34) 3321-3147",

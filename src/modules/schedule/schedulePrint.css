@@ -1,6 +1,7 @@
 /* =============================================================================
    FOLHA DE ESTILOS DOCUMENTAL EXCLUSIVA — IMPRESSÃO A4 PAISAGEM DE ESCALAS
    Geometria em milímetros idêntica entre Pré-Visualização, Impressão e PDF.
+   Alto contraste de grade e preenchimento preto garantido para folgas.
    ============================================================================= */
 
 .erp-print-preview-backdrop {
@@ -99,6 +100,8 @@
   overflow: hidden;
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
   flex-shrink: 0;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
 }
 
 .erp-print-sheet-top {
@@ -110,7 +113,7 @@
 .erp-print-doc-header {
   height: 15.2mm;
   margin-bottom: 1.8mm;
-  border: 0.35mm solid #CBD5E1;
+  border: 0.4mm solid #64748B;
   border-top: 0.9mm solid #2B5690;
   background: #FFFFFF;
   padding: 1.4mm 2.5mm;
@@ -129,9 +132,9 @@
 }
 
 .erp-print-doc-brand-divider {
-  width: 0.3mm;
+  width: 0.35mm;
   height: 9.5mm;
-  background: #E2E8F0;
+  background: #CBD5E1;
   flex-shrink: 0;
 }
 
@@ -139,7 +142,7 @@
   width: 86mm;
   flex-shrink: 0;
   background: #F8FAFC;
-  border: 0.3mm solid #CBD5E1;
+  border: 0.35mm solid #94A3B8;
   padding: 1.1mm 2.2mm;
   font-size: 6.3pt;
   line-height: 1.32;
@@ -147,7 +150,7 @@
   box-sizing: border-box;
 }
 
-/* Tabela fixa horizontalmente — 100% de 281mm sem corte lateral */
+/* Tabela fixa horizontalmente — 100% de 281mm sem corte lateral e alto contraste */
 .erp-print-table {
   width: 281mm;
   max-width: 281mm;
@@ -159,22 +162,22 @@
 
 .erp-print-table th,
 .erp-print-table td {
-  border: 0.28mm solid #CBD5E1;
+  border: 0.34mm solid #64748B;
   padding: 0;
   box-sizing: border-box;
   vertical-align: middle;
 }
 
 .erp-print-table thead th {
-  height: 8.2mm;
-  border-color: #94A3B8;
+  height: 8.4mm;
+  border-color: #475569;
 }
 
 .erp-print-sector-row td {
   height: 5.8mm;
-  background: #EEF2F7;
-  border-color: #94A3B8;
-  border-left: 1.3mm solid #2B5690;
+  background: #DCE4EF;
+  border-color: #475569;
+  border-left: 1.5mm solid #2B5690;
   padding: 0 2.2mm;
 }
 
@@ -185,20 +188,20 @@
 }
 
 .erp-print-collab-name {
-  font-size: 6.4pt;
-  font-weight: 700;
+  font-size: 6.55pt;
+  font-weight: 800;
   line-height: 1.18;
-  color: #0F172A;
+  color: #000000;
   word-break: break-word;
   overflow-wrap: anywhere;
   white-space: normal;
 }
 
 .erp-print-collab-role {
-  font-size: 5.1pt;
-  font-weight: 500;
+  font-size: 5.15pt;
+  font-weight: 600;
   line-height: 1.15;
-  color: #475569;
+  color: #334155;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -206,7 +209,7 @@
 }
 
 .erp-print-journey-cell {
-  background: #FAFAFA;
+  background: #F8FAFC;
   text-align: center;
   padding: 0.4mm 0.8mm !important;
 }
@@ -214,21 +217,60 @@
 .erp-print-day-cell {
   text-align: center;
   padding: 0 !important;
+  position: relative;
+}
+
+.erp-print-day-cell--rest-black {
+  background: #000000 !important;
+  border-color: #000000 !important;
+  box-shadow: inset 0 0 0 50mm #000000 !important;
+}
+
+.erp-print-absence-span-cell {
+  text-align: center;
+  padding: 0 1mm !important;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .erp-print-doc-footer {
-  height: 7.4mm;
-  border: 0.3mm solid #CBD5E1;
+  height: 8.0mm;
+  border: 0.35mm solid #64748B;
   background: #F8FAFC;
-  padding: 0.8mm 2.2mm;
+  padding: 0.7mm 2.2mm;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 3mm;
   box-sizing: border-box;
   font-size: 5.3pt;
-  line-height: 1.28;
-  color: #334155;
+  line-height: 1.3;
+  color: #1E293B;
+}
+
+.erp-print-legend-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2.2mm;
+}
+
+.erp-print-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.1mm;
+}
+
+.erp-print-swatch {
+  width: 3.1mm;
+  height: 2.4mm;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  flex-shrink: 0;
 }
 
 @media print {

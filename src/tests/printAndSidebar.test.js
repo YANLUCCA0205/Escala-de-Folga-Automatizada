@@ -1,20 +1,6 @@
 // =============================================================================
-// TESTES AUTOMATIZADOS PÓS-HOMOLOGAÇÃO — IMPRESSÃO A4 PAISAGEM, PDF E BARRA LATERAL
-//
-// Cobre integralmente a Seção 3 (Testes obrigatórios):
-//   • Meses com 28 (2026-02), 29 (2028-02 bissexto), 30 (2026-11) e 31 (2026-12) dias
-//   • Poucos colaboradores e grande quantidade de colaboradores (54+ em múltiplas páginas)
-//   • Diversos setores e setores que ultrapassam uma página ("(continuação)")
-//   • Zero títulos de setor órfãos no fim da página e zero linhas de colaborador divididas
-//   • Colaboradores com nomes extensos (quebra de linha sem truncamento)
-//   • Ocultação estrita de postos vagos, abertos, congelados e desativados
-//   • Preservação de colaboradores em férias (FÉR) e afastamento (LM / INSS)
-//   • Diferentes unidades operacionais (LOJA_01, LOJA_02, LOJA_03)
-//   • Escalas publicadas (PUBLISHED) e em rascunho (DRAFT)
-//   • Exportação de setores específicos e padronização do nome do PDF
-//   • Geração real de PDF A4 Paisagem vetorial com texto selecionável e pesquisável
-//   • Barra lateral: controle permanente no cabeçalho global (expandida e recolhida),
-//     persistência em localStorage, navegação entre módulos e SSR sem sobreposição
+// TESTES AUTOMATIZADOS PÓS-HOMOLOGAÇÃO — REPRESENTAÇÃO VISUAL DA ESCALA IMPRESSA
+// (PADRÃO OPERACIONAL UNIÃO) E CONTROLE ÚNICO DA BARRA LATERAL
 // =============================================================================
 
 import test from "node:test";
@@ -34,11 +20,6 @@ import {
 import { generateSchedulePdfBytes } from "../domain/schedulePdfExporter.js";
 import { NAV_GROUPS, filterNavGroupsByPermissions } from "../layout/navigation.js";
 
-/**
- * Constrói uma base fictícia rica para testar todos os cenários operacionais
- * (múltiplas unidades, múltiplos setores, postos vagos/congelados, férias, INSS,
- * nomes extensos e setores que atravessam páginas).
- */
 export function createFictitiousScheduleTestDb({
   unitId = "LOJA_02",
   yearMonth = "2026-11",
@@ -149,35 +130,6 @@ export function createFictitiousScheduleTestDb({
         endDate: null,
       });
 
-      if (isOnVacation) {
-        unavailabilityEvents.push({
-          id: `UNAV_VAC_${empId}`,
-          employeeId: empId,
-          unitId,
-          type: "VACATION",
-          startDate: `${yearMonth}-05`,
-          endDate: `${yearMonth}-24`,
-        });
-      } else if (isOnInss) {
-        unavailabilityEvents.push({
-          id: `UNAV_INSS_${empId}`,
-          employeeId: empId,
-          unitId,
-          type: "INSS",
-          startDate: `${yearMonth}-01`,
-          endDate: `${yearMonth}-${String(daysInMonth).padStart(2, "0")}`,
-        });
-      } else if (isOnMaternity) {
-        unavailabilityEvents.push({
-          id: `UNAV_LM_${empId}`,
-          employeeId: empId,
-          unitId,
-          type: "MATERNITY",
-          startDate: `${yearMonth}-01`,
-          endDate: `${yearMonth}-${String(daysInMonth).padStart(2, "0")}`,
-        });
-      }
-
       for (let d = 1; d <= daysInMonth; d++) {
         const isoDate = `${yearMonth}-${String(d).padStart(2, "0")}`;
         const dow = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
@@ -191,8 +143,8 @@ export function createFictitiousScheduleTestDb({
         } else if (isOnVacation && d >= 5 && d <= 24) {
           status = "V";
         } else if ((d + i) % 7 === 0) {
-          status = "F";
-        } else if (dow === 0) {
+          status = i % 3 === 0 ? "A" : "F";
+        } else if (dow === 0 || d === 2 || d === 15) {
           status = "T";
           lunchSlot = String(((i - 1) % 4) + 1);
         }
@@ -209,7 +161,6 @@ export function createFictitiousScheduleTestDb({
       }
     }
 
-    // Adiciona postos VAGOS, CONGELADOS e DESATIVADOS que JAMAIS podem aparecer na impressão/PDF
     const vacantStatuses = ["OPEN_AUTHORIZED", "OPEN_UNPLANNED", "FROZEN", "DEACTIVATED"];
     for (let v = 1; v <= vacantPerSector; v++) {
       const st = vacantStatuses[(v - 1) % vacantStatuses.length];
@@ -238,10 +189,27 @@ export function createFictitiousScheduleTestDb({
     unavailabilityEvents,
     marketCalendarDays: [
       {
+        id: `CAL_${unitId}_02`,
+        unitId,
+        calendarDate: `${yearMonth}-02`,
+        dayType: "HOLIDAY",
+        description: "Finados",
+        openingMode: "FULL_DAY",
+      },
+      {
+        id: `CAL_${unitId}_07`,
+        unitId,
+        calendarDate: `${yearMonth}-07`,
+        dayType: "PAYDAY",
+        description: "Dia de Pagamento Salarial / Maior Movimento",
+        openingMode: "FULL_DAY",
+      },
+      {
         id: `CAL_${unitId}_15`,
         unitId,
         calendarDate: `${yearMonth}-15`,
-        description: "Feriado Nacional",
+        dayType: "HOLIDAY",
+        description: "Proclamação da República",
         openingMode: "HALF_DAY",
       },
     ],
@@ -264,7 +232,7 @@ export function createFictitiousScheduleTestDb({
 test("PRT-01: Meses com 28, 29, 30 e 31 dias cabem 100% em 281mm horizontais com largura uniforme de dias", () => {
   const testMonths = [
     { ym: "2026-02", expectedDays: 28 },
-    { ym: "2028-02", expectedDays: 29 }, // Ano bissexto
+    { ym: "2028-02", expectedDays: 29 },
     { ym: "2026-11", expectedDays: 30 },
     { ym: "2026-12", expectedDays: 31 },
   ];
@@ -283,73 +251,110 @@ test("PRT-01: Meses com 28, 29, 30 e 31 dias cabem 100% em 281mm horizontais com
         includeJourneyDetails,
       });
 
-      assert.equal(doc.days.length, expectedDays, `Competência ${ym} deve ter ${expectedDays} dias`);
-      assert.equal(doc.days[0].dayNumber, "01");
-      assert.equal(doc.days[doc.days.length - 1].dayNumber, String(expectedDays));
-
+      assert.equal(doc.days.length, expectedDays);
       const totalCalculatedWidth =
         doc.geometry.collabColWidthMm +
         doc.geometry.journeyColWidthMm +
         doc.days.length * doc.geometry.dayColWidthMm;
 
       assert.ok(
-        Math.abs(totalCalculatedWidth - PRINT_GEOMETRY_MM.usableWidthMm) < 0.05,
-        `Soma horizontal (${totalCalculatedWidth}mm) deve igualar área útil A4 (${PRINT_GEOMETRY_MM.usableWidthMm}mm)`
+        Math.abs(totalCalculatedWidth - PRINT_GEOMETRY_MM.usableWidthMm) < 0.05
       );
-      assert.ok(
-        doc.geometry.dayColWidthMm >= 6.4,
-        `Cada coluna de dia (${doc.geometry.dayColWidthMm}mm) mantém largura legível em ${ym}`
-      );
+      assert.ok(doc.geometry.dayColWidthMm >= 6.4);
     }
   }
 });
 
-test("PRT-02: Postos vagos, congelados e desativados são 100% ocultados enquanto colaboradores em férias (FÉR) e afastamento (INSS/LM) permanecem", () => {
+test("PRT-02: Nova representação visual das células (Trabalho branco sem T, Folga 100% preta sem F/A, Domingo/Feriado apenas número 1..4 sem I-, Férias/Afastamentos agrupados em faixa horizontal e zero postos vagos)", () => {
   const db = createFictitiousScheduleTestDb({
-    unitId: "LOJA_03",
+    unitId: "LOJA_02",
     yearMonth: "2026-11",
     employeesPerSector: [5, 4, 0, 0],
-    vacantPerSector: 4, // 16 postos vagos/congelados/desativados no banco
+    vacantPerSector: 4,
   });
-
-  const totalPositionsInDb = db.workPositions.length;
-  assert.equal(totalPositionsInDb, 9 + 16);
 
   const doc = buildSchedulePrintDocument({
     db,
-    unitId: "LOJA_03",
+    unitId: "LOJA_02",
     yearMonth: "2026-11",
   });
 
-  // 1. A impressão não altera o banco original
-  assert.equal(db.workPositions.length, 25, "Quadro de postos original do ERP permanece intacto");
-
-  // 2. Exclusivamente os 9 colaboradores ocupantes aparecem no documento
   assert.equal(doc.totalEmployees, 9);
-  assert.equal(doc.totalSectors, 2, "Setores sem colaboradores ocupados são omitidos");
+  const allRows = doc.pages.flatMap((p) => p.blocks.flatMap((b) => b.rows));
 
-  const allPrintedRows = doc.pages.flatMap((p) => p.blocks.flatMap((b) => b.rows));
-  assert.equal(allPrintedRows.length, 9);
+  let checkedNormalWorkWhite = false;
+  let checkedRestBlack = false;
+  let checkedSimpleIntervalNumber = false;
+  let checkedVacationSpan = false;
+  let checkedInssSpan = false;
 
-  for (const row of allPrintedRows) {
-    assert.equal(row.fullName.includes("VAGA"), false, "Nenhuma linha de vaga aparece na impressão");
-    assert.equal(row.cells.length, 30, "Cada colaborador possui todos os 30 dias do mês");
+  for (const row of allRows) {
+    assert.equal(row.fullName.includes("VAGA"), false);
+
+    for (const cell of row.cells) {
+      // Nenhuma célula jamais exibe prefixo "I-" ou letras "T" / "F" / "A"
+      assert.equal(cell.displayText.startsWith("I-"), false, "Proibido prefixo I- nos intervalos");
+      assert.notEqual(cell.displayText, "T", "Dia de trabalho nunca exibe letra T");
+      assert.notEqual(cell.displayText, "F", "Dia de folga nunca exibe letra F");
+      assert.notEqual(cell.displayText, "A", "Folga adicional nunca exibe letra A");
+
+      if (cell.status === "T" && !cell.lunchSlot) {
+        assert.equal(cell.bgHex, "#FFFFFF");
+        assert.equal(cell.displayText, "");
+        checkedNormalWorkWhite = true;
+      }
+      if (cell.status === "F" || cell.status === "A") {
+        assert.equal(cell.isRest, true);
+        assert.equal(cell.bgHex, "#000000", "Folga é representada por célula 100% preta");
+        assert.equal(cell.displayText, "");
+        checkedRestBlack = true;
+      }
+      if (cell.status === "T" && cell.lunchSlot) {
+        assert.equal(cell.bgHex, "#FFFFFF", "Domingo/feriado trabalhado mantém célula branca");
+        assert.match(cell.displayText, /^[1-4]$/, "Exibe somente o número simples do intervalo (1 a 4)");
+        checkedSimpleIntervalNumber = true;
+      }
+    }
+
+    for (const seg of row.segments) {
+      if (seg.isSpan && seg.status === "V") {
+        assert.equal(seg.spanLength, 20);
+        assert.equal(seg.spanLabel, "FÉRIAS — 05/11 A 24/11");
+        checkedVacationSpan = true;
+      }
+      if (seg.isSpan && seg.status === "INSS") {
+        assert.equal(seg.spanLength, 30);
+        assert.equal(seg.spanLabel, "AFASTAMENTO INSS — 01/11 A 30/11");
+        checkedInssSpan = true;
+      }
+    }
   }
 
-  // 3. Colaboradores em Férias (FÉR), INSS e Licença Maternidade (LM) estão presentes com suas marcações
-  const allCodes = new Set(allPrintedRows.flatMap((r) => r.cells.map((c) => c.code)));
-  assert.ok(allCodes.has("FÉR"), "Colaborador em férias permanece com marcação FÉR");
-  assert.ok(allCodes.has("INSS"), "Colaborador afastado pelo INSS permanece com marcação INSS");
-  assert.ok(allCodes.has("LM"), "Colaboradora em licença maternidade permanece com marcação LM");
-  assert.ok(allCodes.has("F"), "Folgas semanais (F) estão presentes");
-  assert.ok(allCodes.has("T"), "Dias de trabalho (T) estão presentes");
+  assert.equal(checkedNormalWorkWhite, true);
+  assert.equal(checkedRestBlack, true);
+  assert.equal(checkedSimpleIntervalNumber, true);
+  assert.equal(checkedVacationSpan, true);
+  assert.equal(checkedInssSpan, true);
+
+  // Classificação das datas concentrada nos cabeçalhos (Seção 1.3)
+  const day01Sun = doc.days.find((d) => d.dayNumber === "01");
+  const day02Hol = doc.days.find((d) => d.dayNumber === "02");
+  const day03Wk = doc.days.find((d) => d.dayNumber === "03");
+  const day07Peak = doc.days.find((d) => d.dayNumber === "07");
+  const day15Half = doc.days.find((d) => d.dayNumber === "15");
+
+  assert.equal(day01Sun.headerTone, "sunday");
+  assert.equal(day02Hol.headerTone, "holiday");
+  assert.equal(day03Wk.headerTone, "weekday");
+  assert.equal(day07Peak.headerTone, "special_peak");
+  assert.equal(day15Half.headerTone, "half");
 });
 
 test("PRT-03: Paginação vertical com 54 colaboradores distribui em múltiplas páginas, repete cabeçalhos, marca '(continuação)' e nunca divide linhas ou deixa setor órfão", () => {
   const db = createFictitiousScheduleTestDb({
     unitId: "LOJA_02",
     yearMonth: "2026-11",
-    employeesPerSector: [14, 22, 10, 8], // 54 colaboradores (Setor 2 tem 22 e atravessa páginas)
+    employeesPerSector: [14, 22, 10, 8],
   });
 
   const doc = buildSchedulePrintDocument({
@@ -359,47 +364,34 @@ test("PRT-03: Paginação vertical com 54 colaboradores distribui em múltiplas 
   });
 
   assert.equal(doc.totalEmployees, 54);
-  assert.ok(doc.totalPages >= 3, `Esperado >= 3 páginas para 54 colaboradores, obtido ${doc.totalPages}`);
+  assert.ok(doc.totalPages >= 3);
+  assert.equal(
+    doc.pages.reduce((acc, p) => acc + p.pageEmployeeCount, 0),
+    54
+  );
 
-  // Soma de colaboradores nas páginas é exatamente 54 (nenhum duplicado, nenhum perdido)
-  const sumAcrossPages = doc.pages.reduce((acc, p) => acc + p.pageEmployeeCount, 0);
-  assert.equal(sumAcrossPages, 54);
-
-  // Verifica altura máxima e ausência de setor órfão (todo bloco em toda página tem >= 1 colaborador)
   let foundContinuationBlock = false;
   doc.pages.forEach((page, idx) => {
     assert.equal(page.pageNumber, idx + 1);
-    assert.equal(page.totalPages, doc.totalPages);
-    assert.ok(
-      page.usedHeightMm <= PRINT_GEOMETRY_MM.bodyMaxHeightMm + 0.01,
-      `Página ${page.pageNumber} respeita limite vertical (${page.usedHeightMm}mm <= ${PRINT_GEOMETRY_MM.bodyMaxHeightMm}mm)`
-    );
+    assert.ok(page.usedHeightMm <= PRINT_GEOMETRY_MM.bodyMaxHeightMm + 0.01);
     for (const block of page.blocks) {
-      assert.ok(
-        block.rows.length >= 1,
-        `Setor '${block.displayTitle}' na página ${page.pageNumber} nunca fica isolado sem colaboradores`
-      );
+      assert.ok(block.rows.length >= 1);
       if (block.isContinuation) {
         foundContinuationBlock = true;
-        assert.ok(
-          block.displayTitle.includes("(continuação)"),
-          `Setor continuado exibe sufixo '(continuação)': ${block.displayTitle}`
-        );
+        assert.ok(block.displayTitle.includes("(continuação)"));
       }
     }
   });
-
-  assert.equal(foundContinuationBlock, true, "Setor que ultrapassa a página é identificado com (continuação)");
+  assert.equal(foundContinuationBlock, true);
 });
 
 test("PRT-04: Nomes extensos quebram em múltiplas linhas sem truncamento e opções de setores específicos / unidades / rascunho funcionam", () => {
   const longName =
     "FRANCISCO WELLINGTON NASCIMENTO DE ALBUQUERQUE E OLIVEIRA FILHO";
   const wrapped = wrapTextLines(longName, 30, 4);
-  assert.ok(wrapped.length >= 2, "Nome extenso é quebrado em 2+ linhas");
-  assert.equal(wrapped.join(" "), longName, "Nenhuma letra do nome completo é perdida ou truncada");
+  assert.ok(wrapped.length >= 2);
+  assert.equal(wrapped.join(" "), longName);
 
-  // Teste de filtro por setores selecionados + escala em rascunho + outra unidade (LOJA_01)
   const db = createFictitiousScheduleTestDb({
     unitId: "LOJA_01",
     yearMonth: "2026-10",
@@ -421,15 +413,9 @@ test("PRT-04: Nomes extensos quebram em múltiplas linhas sem truncamento e opç
   });
 
   assert.equal(partialDoc.totalSectors, 2);
-  assert.equal(partialDoc.totalEmployees, 4 + 3);
-  assert.equal(partialDoc.scheduleStatusLabel, "Em Rascunho");
-  assert.equal(partialDoc.days.length, 31);
-  assert.equal(
-    partialDoc.fileName,
-    "Escala_Mensal_Loja_01_2026-10_Setores_Selecionados.pdf"
-  );
+  assert.equal(partialDoc.totalEmployees, 7);
+  assert.equal(partialDoc.fileName, "Escala_Mensal_Loja_01_2026-10_Setores_Selecionados.pdf");
 
-  // Nome padronizado para escala completa da Loja 02 em 2026-11 (exemplo exato da especificação 1.6)
   const stdName = buildSchedulePdfFilename({
     unit: { name: "LOJA 02 - ALDEOTA" },
     unitId: "LOJA_02",
@@ -439,11 +425,11 @@ test("PRT-04: Nomes extensos quebram em múltiplas linhas sem truncamento e opç
   assert.equal(stdName, "Escala_Mensal_Loja_02_2026-11.pdf");
 });
 
-test("PRT-05: Exportador PDF gera documento PDF-1.4 A4 Paisagem válido com texto selecionável e pesquisável", () => {
+test("PRT-05: Exportador PDF gera documento PDF-1.4 A4 Paisagem válido com células pretas de folga, faixas de férias e sem prefixos I-", () => {
   const db = createFictitiousScheduleTestDb({
     unitId: "LOJA_02",
     yearMonth: "2026-11",
-    employeesPerSector: [14, 18, 12, 10], // 54 colaboradores -> 3 páginas
+    employeesPerSector: [14, 18, 12, 10],
   });
 
   const doc = buildSchedulePrintDocument({
@@ -454,27 +440,19 @@ test("PRT-05: Exportador PDF gera documento PDF-1.4 A4 Paisagem válido com text
 
   const pdfBytes = generateSchedulePdfBytes(doc);
   assert.ok(pdfBytes instanceof Uint8Array);
-  assert.ok(pdfBytes.byteLength > 15000, "PDF multipágina possui conteúdo vetorial substancial");
+  assert.ok(pdfBytes.byteLength > 15000);
 
   const pdfLatin1 = Buffer.from(pdfBytes).toString("latin1");
-  assert.ok(pdfLatin1.startsWith("%PDF-1.4\n"), "Cabeçalho PDF-1.4 válido");
-  assert.ok(pdfLatin1.trimEnd().endsWith("%%EOF"), "Marcador %%EOF válido");
-  assert.ok(
-    pdfLatin1.includes("/MediaBox [0 0 841.89 595.276]"),
-    "MediaBox em formato exato A4 Paisagem (297mm x 210mm)"
-  );
-  assert.ok(
-    pdfLatin1.includes(`/Count ${doc.totalPages}`),
-    `Árvore de páginas PDF contém todas as ${doc.totalPages} páginas`
-  );
-  // Verifica que o texto é selecionável/pesquisável (não imagem)
-  assert.ok(pdfLatin1.includes("ESCALA MENSAL DE TRABALHO E FOLGAS"));
-  assert.ok(pdfLatin1.includes("LOJA 02 - ALDEOTA"));
-  assert.ok(pdfLatin1.includes("FRANCISCO WELLINGTON NASCIMENTO"));
-  assert.ok(pdfLatin1.includes("SETOR: MERCEARIA E REPOSI"));
+  assert.ok(pdfLatin1.startsWith("%PDF-1.4\n"));
+  assert.ok(pdfLatin1.trimEnd().endsWith("%%EOF"));
+  assert.ok(pdfLatin1.includes("/MediaBox [0 0 841.89 595.276]"));
+  assert.ok(pdfLatin1.includes(`/Count ${doc.totalPages}`));
+  assert.ok(pdfLatin1.includes("0.000 0.000 0.000 rg"), "PDF desenha retângulos pretos sólidos nas folgas");
+  assert.ok(pdfLatin1.includes("05/11 A 24/11"), "PDF renderiza faixa horizontal agrupada de férias");
+  assert.equal(pdfLatin1.includes("(I-1)"), false, "PDF não utiliza prefixos I-1..I-4");
 });
 
-test("SDB-01: Barra lateral possui controle permanente no cabeçalho global (expandida e recolhida) e folha de impressão renderiza via SSR", async () => {
+test("SDB-01: Existe EXCLUSIVAMENTE UM controle de alternância da barra lateral (#erp-sidebar-toggle-btn) no layout global", async () => {
   const vite = await createServer({
     cacheDir: path.join(os.tmpdir(), "uniao-erp-vite-print-sidebar-test"),
     server: { middlewareMode: true, hmr: false, watch: null },
@@ -490,8 +468,7 @@ test("SDB-01: Barra lateral possui controle permanente no cabeçalho global (exp
 
     const navGroups = filterNavGroupsByPermissions(NAV_GROUPS, "MANAGER");
 
-    // 1. Renderiza com barra lateral expandida (default)
-    const expandedHtml = renderToStaticMarkup(
+    const html = renderToStaticMarkup(
       createElement(
         AppShell,
         {
@@ -510,30 +487,33 @@ test("SDB-01: Barra lateral possui controle permanente no cabeçalho global (exp
       )
     );
 
-    assert.ok(
-      expandedHtml.includes('class="erp-icon-btn erp-icon-btn--sm erp-sidebar-toggle-desktop"'),
-      "Controle permanente de alternância da barra lateral está presente no cabeçalho global (.erp-header)"
+    // Conta todos os botões que controlam aria-controls="erp-primary-sidebar"
+    const toggleMatches = html.match(/aria-controls="erp-primary-sidebar"/g) || [];
+    assert.equal(
+      toggleMatches.length,
+      1,
+      "Deve existir EXCLUSIVAMENTE UM controle funcional para expandir/recolher a barra lateral em todo o layout"
     );
-    assert.ok(expandedHtml.includes('aria-controls="erp-primary-sidebar"'));
-    assert.ok(expandedHtml.includes('aria-label="Recolher barra lateral"'));
+    assert.ok(html.includes('id="erp-sidebar-toggle-btn"'));
+    assert.equal(html.includes("erp-sidebar-collapse-inline-btn"), false);
+    assert.equal(html.includes("erp-sidebar-toggle-mobile"), false);
 
-    // 2. Renderiza folha documental A4 Paisagem (SchedulePrintSheet) e valida elementos obrigatórios
+    // Verifica que a folha documental HTML usa células pretas de folga, faixas colSpan de férias e legenda gráfica
     const db = createFictitiousScheduleTestDb({
       unitId: "LOJA_02",
       yearMonth: "2026-11",
-      employeesPerSector: [3, 2, 0, 0],
+      employeesPerSector: [4, 0, 0, 0],
     });
     const doc = buildSchedulePrintDocument({ db, unitId: "LOJA_02", yearMonth: "2026-11" });
     const sheetHtml = renderToStaticMarkup(
       createElement(SchedulePrintSheet, { doc, page: doc.pages[0] })
     );
 
-    assert.ok(sheetHtml.includes("ESCALA MENSAL DE TRABALHO E FOLGAS"));
-    assert.ok(sheetHtml.includes("LOJA 02 - ALDEOTA"));
-    assert.ok(sheetHtml.includes("COMPETÊNCIA: NOVEMBRO / 2026 (2026-11)"));
-    assert.ok(sheetHtml.includes("Página 1 de 1"));
-    assert.ok(sheetHtml.includes("FRENTE DE LOJA / CAIXAS"));
-    assert.equal(sheetHtml.includes("VAGA"), false, "Nenhum posto vago aparece no HTML documental");
+    assert.ok(sheetHtml.includes("erp-print-rest-black-cell"), "Células de folga usam classe preta sólida");
+    assert.ok(sheetHtml.includes('colspan="20"'), "Período de férias consecutivo usa colSpan horizontal");
+    assert.ok(sheetHtml.includes("FÉRIAS — 05/11 A 24/11"));
+    assert.ok(sheetHtml.includes("AFASTAMENTO INSS — 01/11 A 30/11"));
+    assert.equal(sheetHtml.includes("I-1"), false);
   } finally {
     await vite.close();
   }

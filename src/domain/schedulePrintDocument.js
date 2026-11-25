@@ -7,20 +7,24 @@
 //   2. Impressão física nativa (@media print A4 landscape via portal dedicado);
 //   3. Exportação direta em PDF vetorial pesquisável (schedulePdfExporter).
 //
-// Garantias arquiteturais:
-//   • Ocultação estrita de postos vagos, congelados sem colaborador, desativados
-//     e linhas vazias (preservando colaboradores em férias ou afastamento).
-//   • 100% dos dias da competência (28, 29, 30 ou 31) distribuídos horizontalmente
-//     em uma única página A4 paisagem com largura uniforme nas colunas de dias.
-//   • Paginação exclusivamente vertical (por colaboradores): zero linhas partidas,
-//     zero títulos de setor órfãos no fim da página e repetição automática de
-//     cabeçalho institucional, dias do mês e "(continuação)" do setor.
+// Padrão visual operacional União Supermercados (Pós-Homologação):
+//   • Dia normal de trabalho: célula branca vazia (sem letra "T").
+//   • Dia de folga (normal ou adicional, inclusive em domingos/feriados):
+//     célula completamente preenchida em preto (#000000), sem letras.
+//   • Domingo, feriado ou meio expediente trabalhado com intervalo:
+//     célula branca exibindo somente o número do intervalo ("1" a "4") em negrito.
+//   • Classificação das datas concentrada nos cabeçalhos das colunas (Dias normais:
+//     neutro; Domingos: cinza; Feriados: azul; Datas especiais/pico: vermelho;
+//     Meio expediente: âmbar).
+//   • Férias, licenças e afastamentos consecutivos agrupados visualmente em faixas
+//     horizontais ("FÉRIAS — 05/11 A 24/11"), sem expor diagnósticos sensíveis.
 // =============================================================================
 
 import {
   listDatesInYearMonth,
   getDayOfWeekISO,
   calculateEmployeeMonthlyWorkload,
+  FAIXAS_ALMOCO_DOMINGO,
 } from "./scheduleEngine.js";
 
 export const PRINT_GEOMETRY_MM = {
@@ -32,11 +36,11 @@ export const PRINT_GEOMETRY_MM = {
   usableHeightMm: 196.0,
   docHeaderHeightMm: 15.2,
   docHeaderGapMm: 1.8,
-  tableHeaderHeightMm: 8.2,
+  tableHeaderHeightMm: 8.4,
   footerGapMm: 1.6,
-  footerHeightMm: 7.4,
+  footerHeightMm: 8.0,
   // Área vertical máxima segura para linhas de setores + colaboradores (com folga anti-corte)
-  bodyMaxHeightMm: 157.5,
+  bodyMaxHeightMm: 156.8,
   sectorHeaderHeightMm: 5.8,
 };
 
@@ -58,108 +62,51 @@ const MESES_PT = [
 const DOW_CURTO_DOC = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"];
 
 /**
- * Células documentais de baixo consumo de tinta (fundo predominantemente branco)
- * e alto contraste tipográfico para impressoras coloridas ou laser monocromáticas.
+ * Estilos visuais para situações especiais e afastamentos (distintos do branco de
+ * trabalho e do preto sólido de folga, inclusive em impressão P&B).
  */
-export const PRINT_CELL_STYLES = {
-  T: {
-    code: "T",
-    bgHex: "#FFFFFF",
-    bgSundayHex: "#F8FAFC",
-    textHex: "#1E293B",
-    textSundayHex: "#0F172A",
-    slotBgHex: "#DCFCE7",
-    slotTextHex: "#14532D",
-  },
-  F: {
-    code: "F",
-    bgHex: "#E8EFF8",
-    bgSundayHex: "#DCE7F5",
-    textHex: "#1E3A8A",
-    textSundayHex: "#1E3A8A",
-    slotBgHex: "#DBEAFE",
-    slotTextHex: "#1E3A8A",
-  },
-  A: {
-    code: "A",
-    bgHex: "#F3E8FF",
-    bgSundayHex: "#F3E8FF",
-    textHex: "#5B21B6",
-    textSundayHex: "#5B21B6",
-    slotBgHex: "#EDE9FE",
-    slotTextHex: "#5B21B6",
-  },
-  MEIO_EXP: {
-    code: "1/2",
-    bgHex: "#FEF3C7",
-    bgSundayHex: "#FEF3C7",
-    textHex: "#92400E",
-    textSundayHex: "#92400E",
-    slotBgHex: "#FDE68A",
-    slotTextHex: "#78350F",
-  },
-  FECHADO: {
-    code: "FECH",
-    bgHex: "#FEE2E2",
-    bgSundayHex: "#FEE2E2",
-    textHex: "#991B1B",
-    textSundayHex: "#991B1B",
-    slotBgHex: "#FECACA",
-    slotTextHex: "#991B1B",
-  },
+export const SPECIAL_STATUS_STYLES = {
   V: {
-    code: "FÉR",
-    bgHex: "#FFE4E6",
-    bgSundayHex: "#FFE4E6",
-    textHex: "#9F1239",
-    textSundayHex: "#9F1239",
-    slotBgHex: "#FECDD3",
-    slotTextHex: "#9F1239",
-  },
-  LM: {
-    code: "LM",
-    bgHex: "#FCE7F3",
-    bgSundayHex: "#FCE7F3",
-    textHex: "#9D174D",
-    textSundayHex: "#9D174D",
-    slotBgHex: "#FBCFE8",
-    slotTextHex: "#9D174D",
+    shortCode: "FÉR",
+    longTitle: "FÉRIAS",
+    bgHex: "#FEF3C7",
+    textHex: "#78350F",
+    borderHex: "#B45309",
   },
   INSS: {
-    code: "INSS",
+    shortCode: "INSS",
+    longTitle: "AFASTAMENTO INSS",
     bgHex: "#EDE9FE",
-    bgSundayHex: "#EDE9FE",
-    textHex: "#4C1D95",
-    textSundayHex: "#4C1D95",
-    slotBgHex: "#DDD6FE",
-    slotTextHex: "#4C1D95",
+    textHex: "#3B0764",
+    borderHex: "#5B21B6",
+  },
+  LM: {
+    shortCode: "LM",
+    longTitle: "LICENÇA-MATERNIDADE",
+    bgHex: "#FCE7F3",
+    textHex: "#831843",
+    borderHex: "#9D174D",
   },
   ADM: {
-    code: "ADM",
+    shortCode: "ADM",
+    longTitle: "PRÉ-ADMISSÃO",
     bgHex: "#F1F5F9",
-    bgSundayHex: "#F1F5F9",
-    textHex: "#475569",
-    textSundayHex: "#475569",
-    slotBgHex: "#E2E8F0",
-    slotTextHex: "#475569",
+    textHex: "#334155",
+    borderHex: "#64748B",
   },
   DEM: {
-    code: "DEM",
+    shortCode: "DEM",
+    longTitle: "DESLIGAMENTO",
     bgHex: "#F1F5F9",
-    bgSundayHex: "#F1F5F9",
-    textHex: "#64748B",
-    textSundayHex: "#64748B",
-    slotBgHex: "#E2E8F0",
-    slotTextHex: "#64748B",
+    textHex: "#475569",
+    borderHex: "#64748B",
   },
-  EMPTY: {
-    code: "—",
-    bgHex: "#FFFFFF",
-    bgSundayHex: "#F8FAFC",
-    textHex: "#94A3B8",
-    textSundayHex: "#94A3B8",
-    slotBgHex: "#F1F5F9",
-    slotTextHex: "#64748B",
+  FECHADO: {
+    shortCode: "FECH",
+    longTitle: "LOJA FECHADA",
+    bgHex: "#FEE2E2",
+    textHex: "#991B1B",
+    borderHex: "#B91C1B",
   },
 };
 
@@ -177,6 +124,330 @@ export function formatScheduleStatusLabel(status) {
     DRAFT: "Em Rascunho",
   };
   return map[status] || "Em Rascunho";
+}
+
+/**
+ * Extrai dinamicamente do sistema os horários de intervalo configurados (1..4).
+ */
+export function resolveConfiguredLunchIntervals(db) {
+  const source =
+    db?.lunchIntervals && typeof db.lunchIntervals === "object"
+      ? db.lunchIntervals
+      : FAIXAS_ALMOCO_DOMINGO || {};
+
+  return Object.entries(source).map(([slotKey, meta]) => {
+    const cleanNum = String(slotKey).replace(/^I-?/i, "").trim();
+    const rawHorario = String(meta?.horario || "")
+      .replace(/\s+às\s+/i, " às ")
+      .trim();
+    return {
+      slot: cleanNum,
+      code: meta?.codigo || `N 0${cleanNum}`,
+      horario: rawHorario || `${cleanNum}º horário`,
+      label: `${cleanNum} — ${rawHorario || `${cleanNum}º horário`}`,
+    };
+  });
+}
+
+/**
+ * Classifica a natureza da data exclusivamente para o cabeçalho da coluna (Seção 1.3),
+ * estabelecendo regra de prioridade visual consistente quando houver múltiplas condições.
+ */
+export function resolveDayHeaderClassification({ isoDate, dow, marketDay }) {
+  const isSunday = dow === 0;
+  const isSaturday = dow === 6;
+  const dayType = String(marketDay?.dayType || "").toUpperCase();
+  const openingMode = String(marketDay?.openingMode || "").toUpperCase();
+  const isHalfDayMarket = openingMode === "HALF_DAY";
+  const isClosedMarket = openingMode === "CLOSED";
+  const isPeakOrSpecial =
+    dayType === "CRITICAL_OFFER" ||
+    dayType === "PAYDAY" ||
+    dayType === "SPECIAL" ||
+    dayType === "HIGH_TRAFFIC";
+  const isHoliday =
+    dayType === "HOLIDAY" ||
+    dayType === "OPTIONAL_HOLIDAY" ||
+    (Boolean(marketDay) && !isPeakOrSpecial && dayType !== "SUNDAY");
+
+  // Prioridade visual consistente:
+  // 1. Unidade Fechada -> Vinho escuro (#7F1D1D)
+  // 2. Data Especial / Maior Movimento -> Vermelho União (#E9403C)
+  // 3. Feriado -> Azul União (#2B5690)
+  // 4. Meio Expediente Geral -> Âmbar (#FDE68A)
+  // 5. Domingo -> Cinza (#CBD5E1)
+  // 6. Dia Normal -> Neutro (#F8FAFC)
+  if (isClosedMarket) {
+    return {
+      headerTone: "closed",
+      headerBgHex: "#7F1D1D",
+      headerTextHex: "#FFFFFF",
+      headerSubTag: "FECH",
+      isSunOrHoliday: true,
+      isHalfDayMarket: false,
+      isClosedMarket: true,
+      tooltip: marketDay?.description
+        ? `${marketDay.description} (Unidade Fechada)`
+        : `Unidade Fechada (${isoDate})`,
+    };
+  }
+
+  if (isPeakOrSpecial) {
+    return {
+      headerTone: "special_peak",
+      headerBgHex: "#E9403C",
+      headerTextHex: "#FFFFFF",
+      headerSubTag: isHalfDayMarket ? "1/2" : "",
+      isSunOrHoliday: isSunday || Boolean(marketDay),
+      isHalfDayMarket,
+      isClosedMarket: false,
+      tooltip: marketDay?.description
+        ? `${marketDay.description}${isHalfDayMarket ? " · Meio Expediente" : ""}`
+        : `Data Especial / Maior Movimento (${isoDate})`,
+    };
+  }
+
+  if (isHoliday) {
+    return {
+      headerTone: "holiday",
+      headerBgHex: "#2B5690",
+      headerTextHex: "#FFFFFF",
+      headerSubTag: isHalfDayMarket ? "1/2" : "",
+      isSunOrHoliday: true,
+      isHalfDayMarket,
+      isClosedMarket: false,
+      tooltip: marketDay?.description
+        ? `${marketDay.description}${isHalfDayMarket ? " · Meio Expediente" : ""}`
+        : `Feriado (${isoDate})`,
+    };
+  }
+
+  if (isHalfDayMarket) {
+    return {
+      headerTone: "half_day",
+      headerBgHex: "#FDE68A",
+      headerTextHex: "#78350F",
+      headerSubTag: "1/2",
+      isSunOrHoliday: isSunday || Boolean(marketDay),
+      isHalfDayMarket: true,
+      isClosedMarket: false,
+      tooltip: marketDay?.description
+        ? `${marketDay.description} (Meio Expediente)`
+        : `Meio Expediente (${isoDate})`,
+    };
+  }
+
+  if (isSunday || dayType === "SUNDAY") {
+    return {
+      headerTone: "sunday",
+      headerBgHex: "#CBD5E1",
+      headerTextHex: "#0F172A",
+      headerSubTag: "",
+      isSunOrHoliday: true,
+      isHalfDayMarket: false,
+      isClosedMarket: false,
+      tooltip: marketDay?.description || `Domingo (${isoDate})`,
+    };
+  }
+
+  return {
+    headerTone: "normal",
+    headerBgHex: "#F8FAFC",
+    headerTextHex: "#0F172A",
+    headerSubTag: "",
+    isSunOrHoliday: false,
+    isSaturday,
+    isHalfDayMarket: false,
+    isClosedMarket: false,
+    tooltip: `${DOW_CURTO_DOC[dow]} (${isoDate})`,
+  };
+}
+
+/**
+ * Determina a representação gráfica individual da célula na impressão/PDF (Seção 1.2).
+ */
+export function resolvePrintCellPresentation({ status, rawLunchSlot, day }) {
+  const cleanSlot =
+    rawLunchSlot !== null && rawLunchSlot !== undefined && String(rawLunchSlot).trim() !== ""
+      ? String(rawLunchSlot).replace(/^I-?/i, "").trim()
+      : null;
+
+  // 1. Folga normal (F) ou adicional (A) — prevalece em qualquer dia (inclusive domingos e feriados):
+  //    célula 100% preta, sem letras e sem números de intervalo.
+  if (status === "F" || status === "A") {
+    return {
+      isoDate: day.isoDate,
+      status,
+      variant: "REST_BLACK",
+      isBlackRest: true,
+      isGroupableAbsence: false,
+      lunchSlot: null,
+      displayText: "",
+      subText: "",
+      bgHex: "#000000",
+      textHex: "#FFFFFF",
+      borderHex: "#000000",
+    };
+  }
+
+  // 2. Férias, Licenças, Afastamentos, Pré-Admissão e Desligamento (agrupáveis em faixa horizontal)
+  if (["V", "INSS", "LM", "ADM", "DEM"].includes(status)) {
+    const meta = SPECIAL_STATUS_STYLES[status];
+    return {
+      isoDate: day.isoDate,
+      status,
+      variant: "SPECIAL_ABSENCE",
+      isBlackRest: false,
+      isGroupableAbsence: true,
+      lunchSlot: null,
+      displayText: meta.shortCode,
+      subText: "",
+      bgHex: meta.bgHex,
+      textHex: meta.textHex,
+      borderHex: meta.borderHex,
+    };
+  }
+
+  // 3. Unidade fechada (quando o colaborador não está de folga/férias/afastamento)
+  if (status === "FECHADO") {
+    const meta = SPECIAL_STATUS_STYLES.FECHADO;
+    return {
+      isoDate: day.isoDate,
+      status,
+      variant: "CLOSED_MARKET",
+      isBlackRest: false,
+      isGroupableAbsence: false,
+      lunchSlot: null,
+      displayText: "",
+      subText: "",
+      bgHex: meta.bgHex,
+      textHex: meta.textHex,
+      borderHex: "#CBD5E1",
+    };
+  }
+
+  // 4. Meio expediente trabajhado (MEIO_EXP)
+  if (status === "MEIO_EXP") {
+    const isIndividualHalfDay = !day.isHalfDayMarket;
+    const hasInterval = Boolean(cleanSlot);
+    return {
+      isoDate: day.isoDate,
+      status,
+      variant: hasInterval ? "WORK_INTERVAL" : "WORK_HALF_DAY",
+      isBlackRest: false,
+      isGroupableAbsence: false,
+      lunchSlot: cleanSlot,
+      // Se há intervalo atribuído, exibe somente o número; se for meio expediente individual sem intervalo, exibe "1/2" discreto
+      displayText: hasInterval ? cleanSlot : isIndividualHalfDay ? "1/2" : "",
+      subText: hasInterval && isIndividualHalfDay ? "1/2" : "",
+      bgHex: "#FFFFFF",
+      textHex: hasInterval ? "#000000" : "#78350F",
+      borderHex: "#64748B",
+    };
+  }
+
+  // 5. Célula vazia explícita (quando em construção manual)
+  if (status === "EMPTY") {
+    return {
+      isoDate: day.isoDate,
+      status,
+      variant: "WORK_EMPTY",
+      isBlackRest: false,
+      isGroupableAbsence: false,
+      lunchSlot: null,
+      displayText: "",
+      subText: "",
+      bgHex: "#FFFFFF",
+      textHex: "#94A3B8",
+      borderHex: "#64748B",
+    };
+  }
+
+  // 6. Dia trabalhado (T):
+  //    - Em domingo, feriado ou dia especial com intervalo atribuído -> célula branca exibindo SOMENTE o número (1..4) em negrito
+  //    - Em dia normal de trabalho (ou domingo sem intervalo) -> célula branca completamente limpa (sem letra "T")
+  const showIntervalNumber = Boolean(cleanSlot) && (day.isSunOrHoliday || day.isHalfDayMarket);
+  return {
+    isoDate: day.isoDate,
+    status: "T",
+    variant: showIntervalNumber ? "WORK_INTERVAL" : "WORK_WHITE",
+    isBlackRest: false,
+    isGroupableAbsence: false,
+    lunchSlot: showIntervalNumber ? cleanSlot : null,
+    displayText: showIntervalNumber ? cleanSlot : "",
+    subText: "",
+    bgHex: "#FFFFFF",
+    textHex: "#000000",
+    borderHex: "#64748B",
+  };
+}
+
+/**
+ * Agrupa visualmente células consecutivas de férias, afastamentos, licenças ou
+ * pré-admissão/desligamento em uma faixa horizontal clara (Seção 1.4), sem alterar
+ * `row.cells` nem os registros individuais de cada data.
+ */
+export function buildRowCellSpans(cells) {
+  const spans = [];
+  let i = 0;
+
+  while (i < cells.length) {
+    const first = cells[i];
+    if (!first.isGroupableAbsence) {
+      spans.push({
+        ...first,
+        isSpan: false,
+        spanLength: 1,
+        startDayIndex: i,
+        endDayIndex: i,
+        startIsoDate: first.isoDate,
+        endIsoDate: first.isoDate,
+      });
+      i += 1;
+      continue;
+    }
+
+    let j = i + 1;
+    while (
+      j < cells.length &&
+      cells[j].isGroupableAbsence &&
+      cells[j].status === first.status
+    ) {
+      j += 1;
+    }
+
+    const spanLength = j - i;
+    const last = cells[j - 1];
+    const startDD = first.isoDate.slice(8, 10);
+    const startMM = first.isoDate.slice(5, 7);
+    const endDD = last.isoDate.slice(8, 10);
+    const endMM = last.isoDate.slice(5, 7);
+    const meta = SPECIAL_STATUS_STYLES[first.status] || SPECIAL_STATUS_STYLES.V;
+
+    let bannerText = meta.shortCode;
+    if (spanLength >= 6) {
+      bannerText = `${meta.longTitle} — ${startDD}/${startMM} A ${endDD}/${endMM}`;
+    } else if (spanLength >= 3) {
+      bannerText = `${meta.longTitle} (${startDD} A ${endDD}/${endMM})`;
+    } else if (spanLength === 2) {
+      bannerText = `${meta.shortCode} ${startDD}–${endDD}`;
+    }
+
+    spans.push({
+      ...first,
+      isSpan: spanLength > 1,
+      spanLength,
+      startDayIndex: i,
+      endDayIndex: j - 1,
+      startIsoDate: first.isoDate,
+      endIsoDate: last.isoDate,
+      displayText: bannerText,
+    });
+
+    i = j;
+  }
+
+  return spans;
 }
 
 /**
@@ -365,6 +636,8 @@ export function buildSchedulePrintDocument({
     versionNumber: 1,
   };
 
+  const configuredLunchIntervals = resolveConfiguredLunchIntervals(db);
+
   const shiftsById = Object.fromEntries((db?.workShifts || []).map((s) => [s.id, s]));
   const rulesById = Object.fromEntries((db?.scheduleRules || []).map((r) => [r.id, r]));
   const employeesById = Object.fromEntries((db?.employees || []).map((e) => [e.id, e]));
@@ -396,24 +669,17 @@ export function buildSchedulePrintDocument({
   const days = monthDates.map((isoDate) => {
     const dow = getDayOfWeekISO(isoDate);
     const mDay = marketCalendarByDate[isoDate] || null;
-    const isSunday = dow === 0;
-    const isSaturday = dow === 6;
-    let headerTone = "weekday";
-    if (mDay?.openingMode === "CLOSED") headerTone = "closed";
-    else if (mDay?.openingMode === "HALF_DAY") headerTone = "half";
-    else if (mDay || isSunday) headerTone = "sunday_holiday";
-    else if (isSaturday) headerTone = "saturday";
+    const cls = resolveDayHeaderClassification({ isoDate, dow, marketDay: mDay });
 
     return {
       isoDate,
       dayNumber: isoDate.slice(8, 10),
       dow,
       dowLabel: DOW_CURTO_DOC[dow],
-      isSunday,
-      isSaturday,
-      isSunOrHoliday: isSunday || Boolean(mDay),
+      isSunday: dow === 0,
+      isSaturday: dow === 6,
       marketDay: mDay,
-      headerTone,
+      ...cls,
     };
   });
 
@@ -469,26 +735,15 @@ export function buildSchedulePrintDocument({
               marketDay: day.marketDay,
               unavailabilityEvents: db?.unavailabilityEvents,
             });
-        const styleMeta = PRINT_CELL_STYLES[resolvedStatus] || PRINT_CELL_STYLES.T;
-        const lunchSlot =
-          (resolvedStatus === "T" || resolvedStatus === "MEIO_EXP") &&
-          day.isSunOrHoliday &&
-          entry?.lunchSlot
-            ? String(entry.lunchSlot)
-            : null;
 
-        return {
-          isoDate: day.isoDate,
+        return resolvePrintCellPresentation({
           status: resolvedStatus,
-          code: styleMeta.code,
-          lunchSlot,
-          isSunOrHoliday: day.isSunOrHoliday,
-          bgHex: day.isSunOrHoliday ? styleMeta.bgSundayHex : styleMeta.bgHex,
-          textHex: day.isSunOrHoliday ? styleMeta.textSundayHex : styleMeta.textHex,
-          slotBgHex: styleMeta.slotBgHex,
-          slotTextHex: styleMeta.slotTextHex,
-        };
+          rawLunchSlot: entry?.lunchSlot,
+          day,
+        });
       });
+
+      const cellSpans = buildRowCellSpans(cells);
 
       const shiftLabel = shift ? `${shift.entryTime}–${shift.effectiveExitTime}` : "—";
       const ruleLabel = rule?.code || "—";
@@ -510,6 +765,7 @@ export function buildSchedulePrintDocument({
         ruleLabel,
         workloadLabel,
         cells,
+        cellSpans,
       });
     }
 
@@ -548,7 +804,6 @@ export function buildSchedulePrintDocument({
     const minInitialRowsMm =
       minInitialRows.reduce((acc, r) => acc + r.rowHeightMm, 0) || 6.6;
 
-    // Evita cabeçalho de setor órfão (ou com apenas 1 linha isolada no rodapé quando o setor possui 2+ colaboradores)
     if (
       currentPage.blocks.length > 0 &&
       currentPage.usedHeightMm + secHdrMm + minInitialRowsMm > maxBodyMm
@@ -656,6 +911,7 @@ export function buildSchedulePrintDocument({
     scopeDescription,
     emittedAtFormatted,
     fileName,
+    configuredLunchIntervals,
     days,
     totalSectors,
     totalEmployees,

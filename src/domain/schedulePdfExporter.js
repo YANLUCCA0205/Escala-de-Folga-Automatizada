@@ -5,8 +5,12 @@
 //   • Formato exato ISO 216 A4 Paisagem (297mm × 210mm = 841.89pt × 595.28pt)
 //   • 100% vetorial e com texto selecionável e pesquisável (WinAnsi / CP1252)
 //   • Símbolo oficial Coração + Onda do União Supermercados em curvas de Bézier
-//   • Mesma paginação, colunas, setores "(continuação)" e legenda da pré-visualização
-//   • Zero dependências externas e zero chamadas de rede
+//   • Representação operacional União:
+//       - Trabalho normal: célula branca vazia (sem letra T)
+//       - Folga (F/A): célula 100% preta (#000000), sem texto
+//       - Domingo/Feriado trabalhado c/ intervalo: somente o número (1..4) em negrito
+//       - Férias e afastamentos consecutivos: faixa horizontal unificada
+//       - Legenda gráfica real com amostras visuais e horários configurados
 // =============================================================================
 
 const PT_PER_MM = 72 / 25.4;
@@ -65,15 +69,12 @@ function hexToRgbPdf(hex) {
   return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
 }
 
-/**
- * Codifica uma string JS para literal de string PDF `(...)` em WinAnsiEncoding.
- */
 function encodePdfLiteral(str) {
   const text = String(str ?? "");
   let out = "(";
   for (let i = 0; i < text.length; i++) {
     const code = text.charCodeAt(i);
-    let byte = 0x3f; // '?'
+    let byte = 0x3f;
     if (code >= 0x20 && code <= 0x7e) {
       byte = code;
     } else if (code >= 0xa0 && code <= 0xff) {
@@ -94,9 +95,6 @@ function encodePdfLiteral(str) {
   return out;
 }
 
-/**
- * Estimativa precisa de largura de texto Helvetica (proporção em relação a fontSizePt).
- */
 function estimateHelveticaWidthPt(str, fontSizePt, isBold = false) {
   const s = String(str ?? "");
   let units = 0;
@@ -113,7 +111,7 @@ function estimateHelveticaWidthPt(str, fontSizePt, isBold = false) {
   return units * fontSizePt * (isBold ? 1.04 : 1.0);
 }
 
-function drawRect(cmds, pageH, xMm, yTopMm, wMm, hMm, { fillHex, strokeHex, lineWidthPt = 0.35 }) {
+function drawRect(cmds, pageH, xMm, yTopMm, wMm, hMm, { fillHex, strokeHex, lineWidthPt = 0.45 }) {
   const x = mm(xMm);
   const y = yTop(pageH, yTopMm + hMm);
   const w = mm(wMm);
@@ -134,7 +132,7 @@ function drawRect(cmds, pageH, xMm, yTopMm, wMm, hMm, { fillHex, strokeHex, line
   }
 }
 
-function drawLine(cmds, pageH, x1Mm, y1TopMm, x2Mm, y2TopMm, strokeHex, lineWidthPt = 0.4) {
+function drawLine(cmds, pageH, x1Mm, y1TopMm, x2Mm, y2TopMm, strokeHex, lineWidthPt = 0.45) {
   cmds.push(`${lineWidthPt.toFixed(2)} w`);
   cmds.push(`${hexToRgbPdf(strokeHex)} RG`);
   cmds.push(
@@ -172,10 +170,6 @@ function drawText(
   cmds.push("ET");
 }
 
-/**
- * Desenha o símbolo oficial Coração + Onda do União Supermercados em curvas de Bézier
- * (viewBox original 120×106 fiel ao Manual da Marca: Vermelho #E9403C + Azul #2B5690).
- */
 function drawUniaoLogoLockup(cmds, pageH, xMm, yTopMm) {
   const symbolWmm = 9.4;
   const symbolHmm = 8.3;
@@ -188,7 +182,6 @@ function drawUniaoLogoLockup(cmds, pageH, xMm, yTopMm) {
   const py = (vy) => (oyTop - vy * sy).toFixed(2);
 
   cmds.push("q");
-  // Contorno do Coração como caminho de recorte (clip path)
   cmds.push(`${px(60)} ${py(98)} m`);
   cmds.push(`${px(57.5)} ${py(98)} ${px(10)} ${py(68.5)} ${px(10)} ${py(35.5)} c`);
   cmds.push(`${px(10)} ${py(17.5)} ${px(24.5)} ${py(5)} ${px(41.5)} ${py(5)} c`);
@@ -198,11 +191,9 @@ function drawUniaoLogoLockup(cmds, pageH, xMm, yTopMm) {
   cmds.push(`${px(110)} ${py(68.5)} ${px(62.5)} ${py(98)} ${px(60)} ${py(98)} c`);
   cmds.push("h W n");
 
-  // Parte superior: Vermelho União (#E9403C)
   cmds.push(`${hexToRgbPdf("#E9403C")} rg`);
   cmds.push(`${px(0)} ${py(106)} ${(120 * sx).toFixed(2)} ${(106 * sy).toFixed(2)} re f`);
 
-  // Parte inferior da onda: Azul União (#2B5690)
   cmds.push(`${hexToRgbPdf("#2B5690")} rg`);
   cmds.push(`${px(4)} ${py(47)} m`);
   cmds.push(`${px(16)} ${py(33)} ${px(38)} ${py(42)} ${px(58)} ${py(58)} c`);
@@ -212,7 +203,6 @@ function drawUniaoLogoLockup(cmds, pageH, xMm, yTopMm) {
   cmds.push("h f");
   cmds.push("Q");
 
-  // Wordmark institucional ao lado do símbolo
   drawText(cmds, pageH, "união", xMm + 11.0, yTopMm + 4.8, {
     font: "F2",
     sizePt: 13.0,
@@ -236,20 +226,25 @@ function renderSchedulePageContentStream(doc, page) {
   // 1. CABEÇALHO INSTITUCIONAL REPETIDO EM TODAS AS PÁGINAS
   drawRect(cmds, pageH, left, top, g.usableWidthMm, g.docHeaderHeightMm, {
     fillHex: "#FFFFFF",
-    strokeHex: "#CBD5E1",
-    lineWidthPt: 0.45,
+    strokeHex: "#64748B",
+    lineWidthPt: 0.55,
   });
-  // Faixa superior fina institucional Azul União
   drawRect(cmds, pageH, left, top, g.usableWidthMm, 0.9, {
     fillHex: "#2B5690",
   });
 
   drawUniaoLogoLockup(cmds, pageH, left + 2.5, top + 2.6);
+  drawLine(
+    cmds,
+    pageH,
+    left + 43.5,
+    top + 2.4,
+    left + 43.5,
+    top + g.docHeaderHeightMm - 1.8,
+    "#CBD5E1",
+    0.45
+  );
 
-  // Divisória vertical após logotipo
-  drawLine(cmds, pageH, left + 43.5, top + 2.4, left + 43.5, top + g.docHeaderHeightMm - 1.8, "#E2E8F0", 0.4);
-
-  // Título documental + Empresa + Unidade
   drawText(cmds, pageH, "ESCALA MENSAL DE TRABALHO E FOLGAS", left + 46.5, top + 5.3, {
     font: "F2",
     sizePt: 9.2,
@@ -272,24 +267,30 @@ function renderSchedulePageContentStream(doc, page) {
     {
       font: "F1",
       sizePt: 6.4,
-      colorHex: "#475569",
+      colorHex: "#334155",
     }
   );
 
-  // Quadro de metadados à direita (Competência, Versão/Situação e Página)
   const metaBoxW = 86.0;
   const metaBoxX = right - metaBoxW - 2.2;
   drawRect(cmds, pageH, metaBoxX, top + 2.1, metaBoxW, g.docHeaderHeightMm - 3.6, {
     fillHex: "#F8FAFC",
-    strokeHex: "#CBD5E1",
-    lineWidthPt: 0.35,
+    strokeHex: "#94A3B8",
+    lineWidthPt: 0.4,
   });
 
-  drawText(cmds, pageH, `COMPETÊNCIA: ${doc.competenceLabel.toUpperCase()} (${doc.yearMonth})`, metaBoxX + 2.4, top + 5.6, {
-    font: "F2",
-    sizePt: 6.8,
-    colorHex: "#0F172A",
-  });
+  drawText(
+    cmds,
+    pageH,
+    `COMPETÊNCIA: ${doc.competenceLabel.toUpperCase()} (${doc.yearMonth})`,
+    metaBoxX + 2.4,
+    top + 5.6,
+    {
+      font: "F2",
+      sizePt: 6.8,
+      colorHex: "#0F172A",
+    }
+  );
   drawText(
     cmds,
     pageH,
@@ -299,13 +300,15 @@ function renderSchedulePageContentStream(doc, page) {
     {
       font: "F1",
       sizePt: 6.3,
-      colorHex: "#334155",
+      colorHex: "#1E293B",
     }
   );
   drawText(
     cmds,
     pageH,
-    `Dias do mês: 01 a ${String(doc.days.length).padStart(2, "0")}  ·  Página ${page.pageNumber} de ${page.totalPages}`,
+    `Dias do mês: 01 a ${String(doc.days.length).padStart(2, "0")}  ·  Página ${
+      page.pageNumber
+    } de ${page.totalPages}`,
     metaBoxX + 2.4,
     top + 12.4,
     {
@@ -315,31 +318,31 @@ function renderSchedulePageContentStream(doc, page) {
     }
   );
 
-  // 2. CABEÇALHO DA TABELA DE DIAS (REPETIDO EM TODAS AS PÁGINAS)
+  // 2. CABEÇALHO DA TABELA DE DIAS (CLASSIFICAÇÃO DAS DATAS CONCENTRADA NO CABEÇALHO)
   const tableTop = top + g.docHeaderHeightMm + g.docHeaderGapMm;
   const thH = g.tableHeaderHeightMm;
 
   drawRect(cmds, pageH, left, tableTop, g.collabColWidthMm, thH, {
-    fillHex: "#EEF2F7",
-    strokeHex: "#94A3B8",
-    lineWidthPt: 0.45,
+    fillHex: "#E2E8F0",
+    strokeHex: "#475569",
+    lineWidthPt: 0.55,
   });
-  drawText(cmds, pageH, "COLABORADOR / FUNÇÃO", left + 2.0, tableTop + 5.1, {
+  drawText(cmds, pageH, "COLABORADOR / FUNÇÃO", left + 2.0, tableTop + 5.2, {
     font: "F2",
-    sizePt: 6.6,
+    sizePt: 6.7,
     colorHex: "#0F172A",
   });
 
   let dayStartX = left + g.collabColWidthMm;
   if (doc.includeJourneyDetails) {
     drawRect(cmds, pageH, dayStartX, tableTop, g.journeyColWidthMm, thH, {
-      fillHex: "#EEF2F7",
-      strokeHex: "#94A3B8",
-      lineWidthPt: 0.45,
+      fillHex: "#E2E8F0",
+      strokeHex: "#475569",
+      lineWidthPt: 0.55,
     });
-    drawText(cmds, pageH, "JORNADA · REGRA", dayStartX, tableTop + 5.1, {
+    drawText(cmds, pageH, "JORNADA · REGRA", dayStartX, tableTop + 5.2, {
       font: "F2",
-      sizePt: 6.1,
+      sizePt: 6.2,
       colorHex: "#0F172A",
       align: "center",
       boxWidthMm: g.journeyColWidthMm,
@@ -349,41 +352,50 @@ function renderSchedulePageContentStream(doc, page) {
 
   doc.days.forEach((day, idx) => {
     const dx = dayStartX + idx * g.dayColWidthMm;
-    let hdrBg = "#F8FAFC";
-    let hdrFg = "#1E293B";
-    if (day.headerTone === "closed") {
-      hdrBg = "#FEE2E2";
-      hdrFg = "#991B1B";
-    } else if (day.headerTone === "half") {
-      hdrBg = "#FEF3C7";
-      hdrFg = "#92400E";
-    } else if (day.headerTone === "sunday_holiday") {
-      hdrBg = "#E8EFF8";
-      hdrFg = "#1E3A8A";
-    } else if (day.headerTone === "saturday") {
-      hdrBg = "#F1F5F9";
-      hdrFg = "#334155";
-    }
-
     drawRect(cmds, pageH, dx, tableTop, g.dayColWidthMm, thH, {
-      fillHex: hdrBg,
-      strokeHex: "#94A3B8",
-      lineWidthPt: 0.35,
+      fillHex: day.headerBgHex,
+      strokeHex: "#475569",
+      lineWidthPt: 0.45,
     });
-    drawText(cmds, pageH, day.dowLabel, dx, tableTop + 3.2, {
-      font: "F2",
-      sizePt: 4.8,
-      colorHex: hdrFg,
-      align: "center",
-      boxWidthMm: g.dayColWidthMm,
-    });
-    drawText(cmds, pageH, day.dayNumber, dx, tableTop + 6.7, {
-      font: "F2",
-      sizePt: 6.6,
-      colorHex: hdrFg,
-      align: "center",
-      boxWidthMm: g.dayColWidthMm,
-    });
+
+    if (day.headerSubTag) {
+      drawText(cmds, pageH, day.dowLabel, dx, tableTop + 2.6, {
+        font: "F2",
+        sizePt: 4.5,
+        colorHex: day.headerTextHex,
+        align: "center",
+        boxWidthMm: g.dayColWidthMm,
+      });
+      drawText(cmds, pageH, day.dayNumber, dx, tableTop + 5.5, {
+        font: "F2",
+        sizePt: 6.3,
+        colorHex: day.headerTextHex,
+        align: "center",
+        boxWidthMm: g.dayColWidthMm,
+      });
+      drawText(cmds, pageH, day.headerSubTag, dx, tableTop + 7.7, {
+        font: "F2",
+        sizePt: 4.1,
+        colorHex: day.headerTextHex,
+        align: "center",
+        boxWidthMm: g.dayColWidthMm,
+      });
+    } else {
+      drawText(cmds, pageH, day.dowLabel, dx, tableTop + 3.2, {
+        font: "F2",
+        sizePt: 4.9,
+        colorHex: day.headerTextHex,
+        align: "center",
+        boxWidthMm: g.dayColWidthMm,
+      });
+      drawText(cmds, pageH, day.dayNumber, dx, tableTop + 6.9, {
+        font: "F2",
+        sizePt: 6.8,
+        colorHex: day.headerTextHex,
+        align: "center",
+        boxWidthMm: g.dayColWidthMm,
+      });
+    }
   });
 
   // 3. BLOCOS DE SETORES E COLABORADORES DA PÁGINA
@@ -392,8 +404,8 @@ function renderSchedulePageContentStream(doc, page) {
   if (page.blocks.length === 0) {
     drawRect(cmds, pageH, left, cursorY, g.usableWidthMm, 18.0, {
       fillHex: "#FFFFFF",
-      strokeHex: "#CBD5E1",
-      lineWidthPt: 0.4,
+      strokeHex: "#64748B",
+      lineWidthPt: 0.45,
     });
     drawText(
       cmds,
@@ -404,7 +416,7 @@ function renderSchedulePageContentStream(doc, page) {
       {
         font: "F1",
         sizePt: 8.0,
-        colorHex: "#475569",
+        colorHex: "#334155",
         align: "center",
         boxWidthMm: g.usableWidthMm,
       }
@@ -414,26 +426,32 @@ function renderSchedulePageContentStream(doc, page) {
   for (const block of page.blocks) {
     const shH = g.sectorHeaderHeightMm;
     drawRect(cmds, pageH, left, cursorY, g.usableWidthMm, shH, {
-      fillHex: "#EEF2F7",
-      strokeHex: "#94A3B8",
-      lineWidthPt: 0.4,
+      fillHex: "#DCE4EF",
+      strokeHex: "#475569",
+      lineWidthPt: 0.5,
     });
-    // Barra lateral de destaque do setor em Azul União
-    drawRect(cmds, pageH, left, cursorY, 1.4, shH, {
+    drawRect(cmds, pageH, left, cursorY, 1.6, shH, {
       fillHex: "#2B5690",
     });
 
-    drawText(cmds, pageH, `SETOR: ${block.displayTitle.toUpperCase()}`, left + 3.0, cursorY + 3.9, {
-      font: "F2",
-      sizePt: 6.7,
-      colorHex: "#0F1E36",
-    });
+    drawText(
+      cmds,
+      pageH,
+      `SETOR: ${block.displayTitle.toUpperCase()}`,
+      left + 3.2,
+      cursorY + 4.0,
+      {
+        font: "F2",
+        sizePt: 6.9,
+        colorHex: "#0F172A",
+      }
+    );
 
     const countInfo = `${block.rows.length} nesta página · ${block.totalEmployeesInSector} no setor`;
     drawText(cmds, pageH, countInfo, right - 58.0, cursorY + 3.9, {
-      font: "F1",
+      font: "F2",
       sizePt: 5.8,
-      colorHex: "#475569",
+      colorHex: "#334155",
       align: "right",
       boxWidthMm: 56.0,
     });
@@ -442,15 +460,15 @@ function renderSchedulePageContentStream(doc, page) {
 
     for (const row of block.rows) {
       const rH = row.rowHeightMm;
-      // Célula do Colaborador + Função
+      // Célula do Colaborador + Função (alto contraste tipográfico)
       drawRect(cmds, pageH, left, cursorY, g.collabColWidthMm, rH, {
         fillHex: "#FFFFFF",
-        strokeHex: "#CBD5E1",
-        lineWidthPt: 0.32,
+        strokeHex: "#64748B",
+        lineWidthPt: 0.42,
       });
 
       const lineStepMm = 2.45;
-      const firstLineBaseline = cursorY + 2.7;
+      const firstLineBaseline = cursorY + 2.75;
       row.nameLines.forEach((lineText, lIdx) => {
         drawText(
           cmds,
@@ -460,8 +478,8 @@ function renderSchedulePageContentStream(doc, page) {
           firstLineBaseline + lIdx * lineStepMm,
           {
             font: "F2",
-            sizePt: 6.3,
-            colorHex: "#0F172A",
+            sizePt: 6.45,
+            colorHex: "#000000",
           }
         );
       });
@@ -478,22 +496,22 @@ function renderSchedulePageContentStream(doc, page) {
         firstLineBaseline + row.nameLines.length * lineStepMm - 0.15,
         {
           font: "F1",
-          sizePt: 5.1,
-          colorHex: "#475569",
+          sizePt: 5.2,
+          colorHex: "#334155",
         }
       );
 
-      // Coluna complementar opcional de Jornada · Regra · Carga
+      // Coluna complementar opcional de Jornada · Regra
       if (doc.includeJourneyDetails) {
         const jx = left + g.collabColWidthMm;
         drawRect(cmds, pageH, jx, cursorY, g.journeyColWidthMm, rH, {
-          fillHex: "#FAFAFA",
-          strokeHex: "#CBD5E1",
-          lineWidthPt: 0.32,
+          fillHex: "#F8FAFC",
+          strokeHex: "#64748B",
+          lineWidthPt: 0.42,
         });
         drawText(cmds, pageH, row.shiftLabel, jx, cursorY + 2.9, {
           font: "F2",
-          sizePt: 5.7,
+          sizePt: 5.8,
           colorHex: "#0F172A",
           align: "center",
           boxWidthMm: g.journeyColWidthMm,
@@ -502,87 +520,233 @@ function renderSchedulePageContentStream(doc, page) {
           ? `${row.ruleLabel} · ${row.workloadLabel.split("·")[0].trim()}`
           : row.ruleLabel;
         drawText(cmds, pageH, subRule, jx, cursorY + 5.3, {
-          font: "F1",
+          font: "F2",
           sizePt: 5.0,
-          colorHex: "#2B5690",
+          colorHex: "#1E3A8A",
           align: "center",
           boxWidthMm: g.journeyColWidthMm,
         });
       }
 
-      // Células uniformes de todos os dias do mês (28, 29, 30 ou 31)
-      row.cells.forEach((cell, cIdx) => {
-        const cx = dayStartX + cIdx * g.dayColWidthMm;
-        drawRect(cmds, pageH, cx, cursorY, g.dayColWidthMm, rH, {
-          fillHex: cell.bgHex,
-          strokeHex: "#CBD5E1",
-          lineWidthPt: 0.3,
+      // Renderiza spans horizontais (células individuais de trabalho/folga ou faixas agrupadas de férias/afastamento)
+      const spansToRender = row.cellSpans || row.cells.map((c, idx) => ({
+        ...c,
+        isSpan: false,
+        spanLength: 1,
+        startDayIndex: idx,
+      }));
+
+      for (const span of spansToRender) {
+        const cx = dayStartX + span.startDayIndex * g.dayColWidthMm;
+        const cw = span.spanLength * g.dayColWidthMm;
+
+        if (span.isBlackRest) {
+          // Folga: preenchimento integral preto sólido, sem texto
+          drawRect(cmds, pageH, cx, cursorY, cw, rH, {
+            fillHex: "#000000",
+            strokeHex: "#000000",
+            lineWidthPt: 0.45,
+          });
+          continue;
+        }
+
+        if (span.isGroupableAbsence) {
+          // Faixa horizontal de Férias, INSS, Licença-Maternidade, Admissão ou Desligamento
+          drawRect(cmds, pageH, cx, cursorY, cw, rH, {
+            fillHex: span.bgHex,
+            strokeHex: span.borderHex || "#475569",
+            lineWidthPt: 0.5,
+          });
+          const labelPt = span.spanLength >= 4 ? 6.1 : span.spanLength >= 2 ? 5.5 : 5.2;
+          drawText(cmds, pageH, span.displayText, cx, cursorY + rH / 2 + 0.85, {
+            font: "F2",
+            sizePt: labelPt,
+            colorHex: span.textHex,
+            align: "center",
+            boxWidthMm: cw,
+          });
+          continue;
+        }
+
+        // Célula de trabalho (branca vazia ou com número de intervalo 1..4 em negrito)
+        drawRect(cmds, pageH, cx, cursorY, cw, rH, {
+          fillHex: span.bgHex || "#FFFFFF",
+          strokeHex: "#64748B",
+          lineWidthPt: 0.42,
         });
 
-        const codeSizePt =
-          cell.code.length >= 4 ? 5.0 : cell.code.length === 3 ? 5.5 : 6.4;
-
-        if (cell.lunchSlot) {
-          // Trabalho em Dom/Feriado com faixa de intervalo (1..4) empilhada com clareza
-          drawText(cmds, pageH, cell.code, cx, cursorY + rH / 2 - 0.35, {
-            font: "F2",
-            sizePt: 5.8,
-            colorHex: cell.textHex,
-            align: "center",
-            boxWidthMm: g.dayColWidthMm,
-          });
-          drawText(cmds, pageH, `I-${cell.lunchSlot}`, cx, cursorY + rH / 2 + 2.05, {
-            font: "F2",
-            sizePt: 4.7,
-            colorHex: cell.slotTextHex,
-            align: "center",
-            boxWidthMm: g.dayColWidthMm,
-          });
-        } else {
-          drawText(cmds, pageH, cell.code, cx, cursorY + rH / 2 + 0.85, {
-            font: cell.status === "T" && !cell.isSunOrHoliday ? "F1" : "F2",
-            sizePt: codeSizePt,
-            colorHex: cell.textHex,
-            align: "center",
-            boxWidthMm: g.dayColWidthMm,
-          });
+        if (span.displayText) {
+          if (span.subText) {
+            drawText(cmds, pageH, span.displayText, cx, cursorY + rH / 2 - 0.1, {
+              font: "F2",
+              sizePt: 7.4,
+              colorHex: span.textHex || "#000000",
+              align: "center",
+              boxWidthMm: cw,
+            });
+            drawText(cmds, pageH, span.subText, cx, cursorY + rH / 2 + 2.1, {
+              font: "F2",
+              sizePt: 4.5,
+              colorHex: "#78350F",
+              align: "center",
+              boxWidthMm: cw,
+            });
+          } else {
+            const isSingleDigitInterval = /^[1-9]$/.test(span.displayText);
+            drawText(cmds, pageH, span.displayText, cx, cursorY + rH / 2 + 1.05, {
+              font: "F2",
+              sizePt: isSingleDigitInterval ? 8.1 : 5.6,
+              colorHex: span.textHex || "#000000",
+              align: "center",
+              boxWidthMm: cw,
+            });
+          }
         }
-      });
+      }
 
       cursorY += rH;
     }
   }
 
-  // 4. RODAPÉ COMPACTO FIXO EM TODAS AS PÁGINAS (LEGENDA + NUMERAÇÃO)
+  // 4. RODAPÉ COM LEGENDA GRÁFICA REAL (Seção 1.7) + NUMERAÇÃO DE PÁGINAS
   const footerTop = g.marginYmm + g.usableHeightMm - g.footerHeightMm;
   drawRect(cmds, pageH, left, footerTop, g.usableWidthMm, g.footerHeightMm, {
     fillHex: "#F8FAFC",
-    strokeHex: "#CBD5E1",
-    lineWidthPt: 0.35,
+    strokeHex: "#64748B",
+    lineWidthPt: 0.45,
   });
 
+  // Linha 1 da Legenda: Amostras gráficas reais (Quadrado branco, Quadrado preto, Número 1..4 e Cores de cabeçalho)
+  const row1Y = footerTop + 1.15;
+  drawText(cmds, pageH, "LEGENDA:", left + 2.0, row1Y + 2.1, {
+    font: "F2",
+    sizePt: 5.6,
+    colorHex: "#0F172A",
+  });
+
+  // Amostra 1: Quadrado branco = Dia de trabalho
+  drawRect(cmds, pageH, left + 15.5, row1Y, 3.0, 2.5, {
+    fillHex: "#FFFFFF",
+    strokeHex: "#334155",
+    lineWidthPt: 0.45,
+  });
+  drawText(cmds, pageH, "Dia de trabalho", left + 19.3, row1Y + 2.0, {
+    font: "F2",
+    sizePt: 5.4,
+    colorHex: "#0F172A",
+  });
+
+  // Amostra 2: Quadrado preto = Dia de folga
+  drawRect(cmds, pageH, left + 38.5, row1Y, 3.0, 2.5, {
+    fillHex: "#000000",
+    strokeHex: "#000000",
+    lineWidthPt: 0.45,
+  });
+  drawText(cmds, pageH, "Dia de folga", left + 42.3, row1Y + 2.0, {
+    font: "F2",
+    sizePt: 5.4,
+    colorHex: "#0F172A",
+  });
+
+  // Amostra 3: Número 1 a 4 = Intervalo
+  drawRect(cmds, pageH, left + 59.0, row1Y, 4.4, 2.5, {
+    fillHex: "#FFFFFF",
+    strokeHex: "#334155",
+    lineWidthPt: 0.45,
+  });
+  drawText(cmds, pageH, "1..4", left + 59.0, row1Y + 2.0, {
+    font: "F2",
+    sizePt: 5.1,
+    colorHex: "#000000",
+    align: "center",
+    boxWidthMm: 4.4,
+  });
+  const intervalsText = (doc.configuredLunchIntervals || [])
+    .map((it) => `${it.slot}: ${it.horario}`)
+    .join("  ·  ");
+  drawText(cmds, pageH, `Intervalos (${intervalsText})`, left + 64.2, row1Y + 2.0, {
+    font: "F1",
+    sizePt: 5.2,
+    colorHex: "#1E293B",
+  });
+
+  // Linha 2 da Legenda: Cores dos cabeçalhos de data + Faixas de férias/afastamento
+  const row2Y = footerTop + 4.45;
+  drawText(cmds, pageH, "CABEÇALHOS:", left + 2.0, row2Y + 2.0, {
+    font: "F2",
+    sizePt: 5.3,
+    colorHex: "#0F172A",
+  });
+
+  // Domingo (Cinza)
+  drawRect(cmds, pageH, left + 19.5, row2Y, 2.8, 2.3, {
+    fillHex: "#CBD5E1",
+    strokeHex: "#475569",
+    lineWidthPt: 0.35,
+  });
+  drawText(cmds, pageH, "Domingo", left + 23.0, row2Y + 1.9, {
+    font: "F1",
+    sizePt: 5.2,
+    colorHex: "#1E293B",
+  });
+
+  // Feriado (Azul)
+  drawRect(cmds, pageH, left + 35.0, row2Y, 2.8, 2.3, {
+    fillHex: "#2B5690",
+    strokeHex: "#1E3A8A",
+    lineWidthPt: 0.35,
+  });
+  drawText(cmds, pageH, "Feriado", left + 38.5, row2Y + 1.9, {
+    font: "F1",
+    sizePt: 5.2,
+    colorHex: "#1E293B",
+  });
+
+  // Data Especial / Maior Movimento (Vermelho)
+  drawRect(cmds, pageH, left + 49.0, row2Y, 2.8, 2.3, {
+    fillHex: "#E9403C",
+    strokeHex: "#991B1B",
+    lineWidthPt: 0.35,
+  });
+  drawText(cmds, pageH, "Data Especial / Pico", left + 52.5, row2Y + 1.9, {
+    font: "F1",
+    sizePt: 5.2,
+    colorHex: "#1E293B",
+  });
+
+  // Meio Expediente (Âmbar)
+  drawRect(cmds, pageH, left + 74.5, row2Y, 2.8, 2.3, {
+    fillHex: "#FDE68A",
+    strokeHex: "#B45309",
+    lineWidthPt: 0.35,
+  });
+  drawText(cmds, pageH, "Meio Expediente (1/2)", left + 78.0, row2Y + 1.9, {
+    font: "F1",
+    sizePt: 5.2,
+    colorHex: "#1E293B",
+  });
+
+  // Faixas de Férias e Afastamentos
+  drawRect(cmds, pageH, left + 103.5, row2Y, 4.2, 2.3, {
+    fillHex: "#FEF3C7",
+    strokeHex: "#B45309",
+    lineWidthPt: 0.4,
+  });
+  drawRect(cmds, pageH, left + 108.3, row2Y, 4.2, 2.3, {
+    fillHex: "#EDE9FE",
+    strokeHex: "#5B21B6",
+    lineWidthPt: 0.4,
+  });
   drawText(
     cmds,
     pageH,
-    "LEGENDA:  T Trabalho   |   F Folga Semanal   |   A Folga Adicional   |   1/2 Meio Expediente   |   FECH Loja Fechada   |   FÉR Férias   |   LM / INSS Afastamento   |   ADM / DEM Admissão/Deslig.",
-    left + 2.0,
-    footerTop + 3.1,
-    {
-      font: "F2",
-      sizePt: 5.4,
-      colorHex: "#1E293B",
-    }
-  );
-  drawText(
-    cmds,
-    pageH,
-    "INTERVALOS DOMINGO / FERIADO:  I-1 (09:00 às 10:00)  ·  I-2 (10:00 às 11:00)  ·  I-3 (11:00 às 12:00)  ·  I-4 (12:00 às 13:00)     ·     Postos vagos e congelados ocultados automaticamente.",
-    left + 2.0,
-    footerTop + 5.9,
+    "Faixas horizontais: Férias / Licença-Maternidade / Afastamento INSS / Vigência Contratual",
+    left + 113.3,
+    row2Y + 1.9,
     {
       font: "F1",
       sizePt: 5.2,
-      colorHex: "#475569",
+      colorHex: "#1E293B",
     }
   );
 
@@ -591,7 +755,7 @@ function renderSchedulePageContentStream(doc, page) {
     pageH,
     `Emitido em ${doc.emittedAtFormatted}  ·  Página ${page.pageNumber} de ${page.totalPages}`,
     right - 68.0,
-    footerTop + 4.6,
+    footerTop + 4.9,
     {
       font: "F2",
       sizePt: 5.8,
@@ -630,13 +794,6 @@ export function generateSchedulePdfBytes(docModel) {
   const pageWidthPt = mm(docModel.geometry.pageWidthMm);
   const pageHeightPt = mm(docModel.geometry.pageHeightMm);
 
-  // Objetos fixos:
-  // 1: Catalog
-  // 2: Pages
-  // 3: Font F1 (Helvetica WinAnsi)
-  // 4: Font F2 (Helvetica-Bold WinAnsi)
-  // 5: Font F3 (Helvetica-Oblique WinAnsi)
-  // 6..N: Pares (Page, Contents) para cada página
   const objects = [];
   const addObject = (bodyStr) => {
     const id = objects.length + 1;
@@ -644,8 +801,8 @@ export function generateSchedulePdfBytes(docModel) {
     return id;
   };
 
-  addObject(""); // placeholder 1: Catalog
-  addObject(""); // placeholder 2: Pages
+  addObject(""); // 1: Catalog
+  addObject(""); // 2: Pages
   const f1Id = addObject(
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
   );
@@ -689,7 +846,6 @@ export function generateSchedulePdfBytes(docModel) {
     byteCursor += b.length;
   };
 
-  // Cabeçalho PDF-1.4 com marcador binário padrão
   pushStr("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
 
   const offsets = [0];

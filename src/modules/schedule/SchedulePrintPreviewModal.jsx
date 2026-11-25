@@ -1,11 +1,14 @@
 // =============================================================================
 // VISUALIZAÇÃO PRÉVIA FIEL E IMPRESSÃO / PDF DA ESCALA MENSAL (A4 PAISAGEM)
 //
-// Renderiza as páginas paginadas exatamente no formato A4 Paisagem (297×210mm):
-//   • Na janela de pré-visualização interativa (com opções de setores, jornada e zoom)
-//   • Em um portal dedicado (`#erp-print-portal-root`) em `document.body` para
-//     impressão física sem qualquer interferência de containers ou barras do ERP
-//   • Integrado ao exportador `downloadSchedulePdf` para salvar PDF pesquisável
+// Combina a estrutura documental corporativa do ERP com a leitura imediata da
+// escala tradicional do União Supermercados:
+//   • Células de trabalho normais: brancas e limpas (sem letra "T")
+//   • Células de folga: preenchimento integral preto (#000000) com SVG vetorial
+//     embutido para garantir impressão física mesmo sem "gráficos de plano de fundo"
+//   • Domingos/feriados trabalhados c/ intervalo: somente o número ("1" a "4")
+//   • Férias e afastamentos consecutivos: faixa horizontal unificada (colSpan)
+//   • Classificação das datas concentrada nos cabeçalhos das colunas
 // =============================================================================
 
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -22,6 +25,9 @@ import "./schedulePrint.css";
 export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
   const g = doc.geometry;
   const totalCols = 1 + (doc.includeJourneyDetails ? 1 : 0) + doc.days.length;
+  const intervalsSummary = (doc.configuredLunchIntervals || [])
+    .map((it) => `${it.slot}: ${it.horario}`)
+    .join(" · ");
 
   return (
     <section
@@ -65,7 +71,7 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
               <div
                 style={{
                   fontSize: "6.1pt",
-                  color: "#475569",
+                  color: "#334155",
                   marginTop: "0.4mm",
                 }}
               >
@@ -105,11 +111,11 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
             <tr>
               <th
                 style={{
-                  background: "#EEF2F7",
+                  background: "#E2E8F0",
                   color: "#0F172A",
                   textAlign: "left",
                   paddingLeft: "1.8mm",
-                  fontSize: "6.4pt",
+                  fontSize: "6.5pt",
                   fontWeight: 800,
                 }}
               >
@@ -118,50 +124,40 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
               {doc.includeJourneyDetails && (
                 <th
                   style={{
-                    background: "#EEF2F7",
+                    background: "#E2E8F0",
                     color: "#0F172A",
                     textAlign: "center",
-                    fontSize: "5.9pt",
+                    fontSize: "6.0pt",
                     fontWeight: 800,
                   }}
                 >
                   JORNADA · REGRA
                 </th>
               )}
-              {doc.days.map((day) => {
-                let hdrBg = "#F8FAFC";
-                let hdrFg = "#1E293B";
-                if (day.headerTone === "closed") {
-                  hdrBg = "#FEE2E2";
-                  hdrFg = "#991B1B";
-                } else if (day.headerTone === "half") {
-                  hdrBg = "#FEF3C7";
-                  hdrFg = "#92400E";
-                } else if (day.headerTone === "sunday_holiday") {
-                  hdrBg = "#E8EFF8";
-                  hdrFg = "#1E3A8A";
-                } else if (day.headerTone === "saturday") {
-                  hdrBg = "#F1F5F9";
-                  hdrFg = "#334155";
-                }
-                return (
-                  <th
-                    key={day.isoDate}
-                    style={{
-                      background: hdrBg,
-                      color: hdrFg,
-                      textAlign: "center",
-                    }}
-                  >
-                    <div style={{ fontSize: "4.7pt", fontWeight: 700, lineHeight: 1.05 }}>
-                      {day.dowLabel}
+              {doc.days.map((day) => (
+                <th
+                  key={day.isoDate}
+                  title={day.tooltip}
+                  data-header-tone={day.headerTone}
+                  style={{
+                    background: day.headerBgHex,
+                    color: day.headerTextHex,
+                    textAlign: "center",
+                  }}
+                >
+                  <div style={{ fontSize: "4.7pt", fontWeight: 700, lineHeight: 1.05 }}>
+                    {day.dowLabel}
+                  </div>
+                  <div style={{ fontSize: "6.6pt", fontWeight: 800, lineHeight: 1.1 }}>
+                    {day.dayNumber}
+                  </div>
+                  {day.headerSubTag && (
+                    <div style={{ fontSize: "4.1pt", fontWeight: 800, lineHeight: 1.0 }}>
+                      {day.headerSubTag}
                     </div>
-                    <div style={{ fontSize: "6.5pt", fontWeight: 800, lineHeight: 1.15 }}>
-                      {day.dayNumber}
-                    </div>
-                  </th>
-                );
-              })}
+                  )}
+                </th>
+              ))}
             </tr>
           </thead>
 
@@ -174,7 +170,7 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
                     height: "18mm",
                     textAlign: "center",
                     fontSize: "7.8pt",
-                    color: "#475569",
+                    color: "#334155",
                   }}
                 >
                   Nenhum posto preenchido encontrado para os setores selecionados nesta competência.
@@ -194,9 +190,9 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
                       >
                         <strong
                           style={{
-                            fontSize: "6.6pt",
+                            fontSize: "6.8pt",
                             fontWeight: 800,
-                            color: "#0F1E36",
+                            color: "#0F172A",
                             letterSpacing: "0.02em",
                           }}
                         >
@@ -205,8 +201,8 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
                         <span
                           style={{
                             fontSize: "5.7pt",
-                            fontWeight: 600,
-                            color: "#475569",
+                            fontWeight: 700,
+                            color: "#334155",
                           }}
                         >
                           {block.rows.length} nesta página · {block.totalEmployeesInSector} no setor
@@ -215,99 +211,159 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
                     </td>
                   </tr>
 
-                  {block.rows.map((row) => (
-                    <tr key={row.rowId} style={{ height: `${row.rowHeightMm}mm` }}>
-                      <td className="erp-print-collab-cell">
-                        <div className="erp-print-collab-name">{row.fullName}</div>
-                        <div className="erp-print-collab-role">
-                          {row.positionCode} · {row.positionTitle}
-                        </div>
-                      </td>
+                  {block.rows.map((row) => {
+                    const spansToRender =
+                      row.cellSpans ||
+                      row.cells.map((c, idx) => ({
+                        ...c,
+                        isSpan: false,
+                        spanLength: 1,
+                        startDayIndex: idx,
+                      }));
 
-                      {doc.includeJourneyDetails && (
-                        <td className="erp-print-journey-cell">
-                          <div
-                            style={{
-                              fontSize: "5.6pt",
-                              fontWeight: 700,
-                              color: "#0F172A",
-                              lineHeight: 1.15,
-                            }}
-                          >
-                            {row.shiftLabel}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: "4.9pt",
-                              fontWeight: 600,
-                              color: "#2B5690",
-                              lineHeight: 1.15,
-                            }}
-                          >
-                            {row.ruleLabel}
-                            {row.workloadLabel
-                              ? ` · ${row.workloadLabel.split("·")[0].trim()}`
-                              : ""}
+                    return (
+                      <tr key={row.rowId} style={{ height: `${row.rowHeightMm}mm` }}>
+                        <td className="erp-print-collab-cell">
+                          <div className="erp-print-collab-name">{row.fullName}</div>
+                          <div className="erp-print-collab-role">
+                            {row.positionCode} · {row.positionTitle}
                           </div>
                         </td>
-                      )}
 
-                      {row.cells.map((cell) => {
-                        const codePt =
-                          cell.code.length >= 4
-                            ? "4.9pt"
-                            : cell.code.length === 3
-                              ? "5.4pt"
-                              : "6.3pt";
-                        return (
-                          <td
-                            key={cell.isoDate}
-                            className="erp-print-day-cell"
-                            style={{
-                              background: cell.bgHex,
-                              color: cell.textHex,
-                            }}
-                          >
-                            {cell.lunchSlot ? (
-                              <div
-                                style={{
-                                  display: "flex",
-                                  flexDirection: "column",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  lineHeight: 1.0,
-                                }}
+                        {doc.includeJourneyDetails && (
+                          <td className="erp-print-journey-cell">
+                            <div
+                              style={{
+                                fontSize: "5.7pt",
+                                fontWeight: 700,
+                                color: "#0F172A",
+                                lineHeight: 1.15,
+                              }}
+                            >
+                              {row.shiftLabel}
+                            </div>
+                            <div
+                              style={{
+                                fontSize: "5.0pt",
+                                fontWeight: 700,
+                                color: "#1E3A8A",
+                                lineHeight: 1.15,
+                              }}
+                            >
+                              {row.ruleLabel}
+                              {row.workloadLabel
+                                ? ` · ${row.workloadLabel.split("·")[0].trim()}`
+                                : ""}
+                            </div>
+                          </td>
+                        )}
+
+                        {spansToRender.map((span) => {
+                          if (span.isBlackRest) {
+                            return (
+                              <td
+                                key={span.isoDate}
+                                className="erp-print-day-cell erp-print-day-cell--rest-black"
+                                data-cell-variant="REST_BLACK"
+                                aria-label="Dia de folga"
                               >
-                                <span style={{ fontSize: "5.6pt", fontWeight: 800 }}>
-                                  {cell.code}
-                                </span>
-                                <span
+                                {/* Retângulo SVG vetorial garante impressão preta sólida em 100% dos navegadores */}
+                                <svg
+                                  viewBox="0 0 10 10"
+                                  preserveAspectRatio="none"
+                                  aria-hidden="true"
                                   style={{
-                                    fontSize: "4.6pt",
-                                    fontWeight: 800,
-                                    color: cell.slotTextHex,
-                                    marginTop: "0.25mm",
+                                    position: "absolute",
+                                    inset: 0,
+                                    width: "100%",
+                                    height: "100%",
+                                    display: "block",
                                   }}
                                 >
-                                  I-{cell.lunchSlot}
-                                </span>
-                              </div>
-                            ) : (
-                              <span
+                                  <rect width="10" height="10" fill="#000000" />
+                                </svg>
+                              </td>
+                            );
+                          }
+
+                          if (span.isGroupableAbsence) {
+                            const fontPt =
+                              span.spanLength >= 4
+                                ? "6.0pt"
+                                : span.spanLength >= 2
+                                  ? "5.4pt"
+                                  : "5.1pt";
+                            return (
+                              <td
+                                key={span.startIsoDate || span.isoDate}
+                                colSpan={span.spanLength}
+                                className="erp-print-absence-span-cell"
+                                data-cell-variant="SPECIAL_ABSENCE"
                                 style={{
-                                  fontSize: codePt,
-                                  fontWeight:
-                                    cell.status === "T" && !cell.isSunOrHoliday ? 600 : 800,
+                                  background: span.bgHex,
+                                  color: span.textHex,
+                                  borderColor: span.borderHex || "#475569",
+                                  fontSize: fontPt,
                                 }}
                               >
-                                {cell.code}
-                              </span>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
+                                {span.displayText}
+                              </td>
+                            );
+                          }
+
+                          const isSingleDigit = /^[1-9]$/.test(span.displayText || "");
+                          return (
+                            <td
+                              key={span.isoDate}
+                              className="erp-print-day-cell"
+                              data-cell-variant={span.variant}
+                              style={{
+                                background: span.bgHex || "#FFFFFF",
+                                color: span.textHex || "#000000",
+                              }}
+                            >
+                              {span.displayText ? (
+                                span.subText ? (
+                                  <div
+                                    style={{
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      alignItems: "center",
+                                      justifyContent: "center",
+                                      lineHeight: 1.0,
+                                    }}
+                                  >
+                                    <span style={{ fontSize: "7.2pt", fontWeight: 800 }}>
+                                      {span.displayText}
+                                    </span>
+                                    <span
+                                      style={{
+                                        fontSize: "4.4pt",
+                                        fontWeight: 800,
+                                        color: "#78350F",
+                                      }}
+                                    >
+                                      {span.subText}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span
+                                    style={{
+                                      fontSize: isSingleDigit ? "8.0pt" : "5.5pt",
+                                      fontWeight: 800,
+                                      lineHeight: 1,
+                                    }}
+                                  >
+                                    {span.displayText}
+                                  </span>
+                                )
+                              ) : null}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
                 </Fragment>
               ))
             )}
@@ -315,23 +371,89 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
         </table>
       </div>
 
-      {/* RODAPÉ FIXO COM LEGENDA COMPACTA E NUMERAÇÃO DE PÁGINAS */}
+      {/* RODAPÉ FIXO COM LEGENDA GRÁFICA REAL (Seção 1.7) E NUMERAÇÃO DE PÁGINAS */}
       <footer className="erp-print-doc-footer">
-        <div>
-          <div style={{ fontWeight: 700, color: "#1E293B" }}>
-            LEGENDA: <strong>T</strong> Trabalho &nbsp;|&nbsp; <strong>F</strong> Folga Semanal
-            &nbsp;|&nbsp; <strong>A</strong> Folga Adicional &nbsp;|&nbsp; <strong>1/2</strong>{" "}
-            Meio Expediente &nbsp;|&nbsp; <strong>FECH</strong> Loja Fechada &nbsp;|&nbsp;{" "}
-            <strong>FÉR</strong> Férias &nbsp;|&nbsp; <strong>LM / INSS</strong> Afastamento
-            &nbsp;|&nbsp; <strong>ADM / DEM</strong> Admissão/Deslig.
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.7mm" }}>
+          <div className="erp-print-legend-row">
+            <strong style={{ color: "#0F172A" }}>LEGENDA:</strong>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#FFFFFF", border: "0.35mm solid #334155" }}
+              />
+              <strong>Dia de trabalho</strong>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#000000", border: "0.35mm solid #000000" }}
+              />
+              <strong>Dia de folga</strong>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{
+                  width: "4.6mm",
+                  background: "#FFFFFF",
+                  border: "0.35mm solid #334155",
+                  fontSize: "4.9pt",
+                  fontWeight: 800,
+                  color: "#000000",
+                }}
+              >
+                1..4
+              </span>
+              <span>
+                <strong>Intervalo Dom/Feriado</strong> ({intervalsSummary})
+              </span>
+            </span>
           </div>
-          <div style={{ color: "#475569" }}>
-            INTERVALOS DOMINGO / FERIADO: <strong>I-1</strong> (09:00 às 10:00) ·{" "}
-            <strong>I-2</strong> (10:00 às 11:00) · <strong>I-3</strong> (11:00 às 12:00) ·{" "}
-            <strong>I-4</strong> (12:00 às 13:00) &nbsp;·&nbsp; Postos vagos e congelados ocultados
-            automaticamente.
+
+          <div className="erp-print-legend-row">
+            <strong style={{ color: "#0F172A" }}>CABEÇALHOS:</strong>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#CBD5E1", border: "0.3mm solid #475569" }}
+              />
+              <span>Domingo</span>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#2B5690", border: "0.3mm solid #1E3A8A" }}
+              />
+              <span>Feriado</span>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#E9403C", border: "0.3mm solid #991B1B" }}
+              />
+              <span>Data Especial / Maior Movimento</span>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#FDE68A", border: "0.3mm solid #B45309" }}
+              />
+              <span>Meio Expediente (1/2)</span>
+            </span>
+            <span className="erp-print-legend-item">
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#FEF3C7", border: "0.3mm solid #B45309" }}
+              />
+              <span
+                className="erp-print-swatch"
+                style={{ background: "#EDE9FE", border: "0.3mm solid #5B21B6" }}
+              />
+              <span>Faixas horizontais: Férias / Licenças / Afastamento INSS</span>
+            </span>
           </div>
         </div>
+
         <div style={{ fontWeight: 700, color: "#0F172A", whiteSpace: "nowrap" }}>
           Emitido em {doc.emittedAtFormatted} · Página {page.pageNumber} de {page.totalPages}
         </div>
