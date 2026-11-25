@@ -101,7 +101,15 @@ export default function AppShell({
 
       <div className="erp-shell">
         {/* BARRA LATERAL SANFONADA E RECOLHÍVEL */}
+        {mobileOpen && (
+          <div
+            className="erp-sidebar-backdrop no-print"
+            aria-hidden="true"
+            onClick={() => setMobileOpen(false)}
+          />
+        )}
         <aside
+          id="erp-primary-sidebar"
           className="erp-sidebar no-print"
           data-collapsed={collapsed ? "true" : "false"}
           data-mobile-closed={mobileOpen ? "false" : "true"}
@@ -109,39 +117,42 @@ export default function AppShell({
         >
           <div className="erp-sidebar-brand">
             {collapsed ? (
-              <UniaoLogo
-                variant={activeTheme.logoVariantSidebar || "positivo_azul"}
-                layout="symbol"
-                size="sm"
-                idSuffix="sb_sym"
-              />
+              <button
+                type="button"
+                onClick={toggleSidebarCollapsed}
+                className="erp-sidebar-brand-collapsed-btn"
+                aria-label="Expandir barra lateral"
+                aria-expanded={false}
+                aria-controls="erp-primary-sidebar"
+                title="Expandir barra lateral"
+              >
+                <UniaoLogo
+                  variant={activeTheme.logoVariantSidebar || "positivo_azul"}
+                  layout="symbol"
+                  size="sm"
+                  idSuffix="sb_sym"
+                />
+              </button>
             ) : (
-              <UniaoLogo
-                variant={activeTheme.logoVariantSidebar || "positivo_azul"}
-                size="sm"
-                idSuffix="sb_full"
-              />
+              <>
+                <UniaoLogo
+                  variant={activeTheme.logoVariantSidebar || "positivo_azul"}
+                  size="sm"
+                  idSuffix="sb_full"
+                />
+                <button
+                  type="button"
+                  onClick={toggleSidebarCollapsed}
+                  aria-label="Recolher barra lateral"
+                  aria-expanded={true}
+                  aria-controls="erp-primary-sidebar"
+                  title="Recolher barra lateral"
+                  className="erp-sidebar-collapse-inline-btn"
+                >
+                  <Icon name="panelLeftClose" size={16} />
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={toggleSidebarCollapsed}
-              aria-label={collapsed ? "Expandir barra lateral" : "Recolher barra lateral"}
-              title={collapsed ? "Expandir barra lateral" : "Recolher barra lateral"}
-              style={{
-                width: 28,
-                height: 28,
-                border: "none",
-                borderRadius: 4,
-                background: "transparent",
-                color: "var(--erp-sidebar-muted)",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <Icon name={collapsed ? "chevronRight" : "panelLeft"} size={16} />
-            </button>
           </div>
 
           <nav className="erp-sidebar-nav">
@@ -197,7 +208,18 @@ export default function AppShell({
                 <span style={{ fontFamily: "var(--erp-font-mono)" }}>v9.0</span>
               </>
             ) : (
-              <span style={{ margin: "0 auto", fontFamily: "var(--erp-font-mono)" }}>v9</span>
+              <button
+                type="button"
+                onClick={toggleSidebarCollapsed}
+                className="erp-sidebar-collapse-inline-btn"
+                style={{ margin: "0 auto" }}
+                aria-label="Expandir barra lateral"
+                aria-expanded={false}
+                aria-controls="erp-primary-sidebar"
+                title="Expandir barra lateral"
+              >
+                <Icon name="panelLeftOpen" size={16} />
+              </button>
             )}
           </div>
         </aside>
@@ -207,13 +229,24 @@ export default function AppShell({
           <header className="erp-header no-print">
             <div className="erp-header-left">
               <IconButton
-                icon="panelLeft"
-                label="Alternar menu"
+                icon={collapsed ? "panelLeftOpen" : "panelLeftClose"}
+                label={collapsed ? "Expandir barra lateral" : "Recolher barra lateral"}
+                size="sm"
+                onClick={toggleSidebarCollapsed}
+                aria-expanded={!collapsed}
+                aria-controls="erp-primary-sidebar"
+                className="erp-sidebar-toggle-desktop"
+              />
+              <IconButton
+                icon={mobileOpen ? "panelLeftClose" : "panelLeftOpen"}
+                label={mobileOpen ? "Fechar menu de navegação" : "Abrir menu de navegação"}
                 size="sm"
                 onClick={() => setMobileOpen((v) => !v)}
-                style={{ display: "none" }}
-                className="erp-mobile-menu-trigger"
+                aria-expanded={mobileOpen}
+                aria-controls="erp-primary-sidebar"
+                className="erp-sidebar-toggle-mobile"
               />
+              <span className="erp-header-divider" aria-hidden="true" />
               <nav aria-label="Localização atual" className="erp-breadcrumb">
                 <span>{breadcrumb.groupLabel}</span>
                 <Icon name="chevronRight" size={13} />

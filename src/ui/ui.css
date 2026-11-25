@@ -86,6 +86,64 @@ button, input, select, textarea {
   border-bottom: 1px solid var(--erp-sidebar-border);
   gap: 8px;
 }
+.erp-sidebar[data-collapsed="true"] .erp-sidebar-brand {
+  justify-content: center;
+  padding: 0 6px;
+}
+
+.erp-sidebar-collapse-inline-btn {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--erp-radius-sm);
+  background: transparent;
+  color: var(--erp-sidebar-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.erp-sidebar-collapse-inline-btn:hover {
+  background: var(--erp-sidebar-hover);
+  color: var(--erp-sidebar-text);
+}
+
+.erp-sidebar-brand-collapsed-btn {
+  width: 44px;
+  height: 38px;
+  border: none;
+  border-radius: var(--erp-radius-md);
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background 0.12s ease;
+}
+.erp-sidebar-brand-collapsed-btn:hover {
+  background: var(--erp-sidebar-hover);
+}
+
+.erp-sidebar-toggle-desktop {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.erp-sidebar-toggle-mobile {
+  display: none;
+  flex-shrink: 0;
+}
+.erp-header-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--erp-border);
+  flex-shrink: 0;
+}
+.erp-sidebar-backdrop {
+  display: none;
+}
 
 .erp-sidebar-nav {
   flex: 1;
@@ -789,20 +847,52 @@ button, input, select, textarea {
     border-right: none;
     border-bottom: 4px solid #E9403C;
   }
+  .erp-sidebar-toggle-desktop {
+    display: none;
+  }
+  .erp-sidebar-toggle-mobile {
+    display: inline-flex;
+  }
+  .erp-sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    z-index: 2050;
+  }
   .erp-sidebar {
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 2100;
+    width: var(--erp-sidebar-width) !important;
   }
   .erp-sidebar[data-mobile-closed="true"] {
     display: none;
   }
 }
 
+.erp-print-portal-only {
+  display: none;
+}
+
 @media print {
-  @page { size: landscape; margin: 7mm; }
-  body { background: #FFFFFF !important; margin: 0; padding: 0; }
+  @page { size: A4 landscape; margin: 0mm; }
+  html, body {
+    background: #FFFFFF !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 297mm !important;
+  }
   * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .no-print { display: none !important; }
   .erp-main { padding: 0 !important; margin: 0 !important; }
+  body[data-erp-printing-schedule="true"] > #root {
+    display: none !important;
+  }
+  body[data-erp-printing-schedule="true"] > #erp-print-portal-root {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+  }
 }

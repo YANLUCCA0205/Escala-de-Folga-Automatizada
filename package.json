@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "provision:master": "node scripts/provision-first-master.mjs",
-    "test": "node --test src/tests/scheduleEngine.test.js src/tests/authAndPartitions.test.js src/tests/navigation.test.js src/tests/uiAndAuthRender.test.js src/tests/localBackendE2E.test.js src/tests/databaseSecurity.test.js",
+    "test": "node --test src/tests/scheduleEngine.test.js src/tests/authAndPartitions.test.js src/tests/navigation.test.js src/tests/uiAndAuthRender.test.js src/tests/printAndSidebar.test.js src/tests/localBackendE2E.test.js src/tests/databaseSecurity.test.js",
     "test:engine": "node --test src/tests/scheduleEngine.test.js",
     "test:security": "node --test src/tests/databaseSecurity.test.js src/tests/authAndPartitions.test.js",
     "lint": "eslint .",

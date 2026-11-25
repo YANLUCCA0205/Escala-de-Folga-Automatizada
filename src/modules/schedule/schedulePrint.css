@@ -1,0 +1,249 @@
+/* =============================================================================
+   FOLHA DE ESTILOS DOCUMENTAL EXCLUSIVA — IMPRESSÃO A4 PAISAGEM DE ESCALAS
+   Geometria em milímetros idêntica entre Pré-Visualização, Impressão e PDF.
+   ============================================================================= */
+
+.erp-print-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  background: rgba(15, 23, 42, 0.72);
+  display: flex;
+  flex-direction: column;
+}
+
+.erp-print-preview-toolbar {
+  background: #0F1E36;
+  color: #F8FAFC;
+  border-bottom: 1px solid #1E3A63;
+  padding: 10px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.erp-print-preview-options-bar {
+  background: #FFFFFF;
+  color: #0F172A;
+  border-bottom: 1px solid #CBD5E1;
+  padding: 8px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.erp-print-sector-drawer {
+  background: #F8FAFC;
+  border-bottom: 1px solid #CBD5E1;
+  padding: 8px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.erp-print-sector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #334155;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.erp-print-sector-chip[data-selected="true"] {
+  background: #E8EFF8;
+  border-color: #2B5690;
+  color: #1E3A8A;
+}
+
+.erp-print-preview-stage {
+  flex: 1;
+  overflow: auto;
+  padding: 22px 24px 36px;
+  background: #CBD5E1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+}
+
+/* -----------------------------------------------------------------------------
+   PÁGINA FÍSICA A4 PAISAGEM (297mm × 210mm)
+   ----------------------------------------------------------------------------- */
+.erp-print-sheet {
+  width: 297mm;
+  height: 210mm;
+  padding: 7mm 8mm;
+  box-sizing: border-box;
+  background: #FFFFFF;
+  color: #0F172A;
+  font-family: var(--erp-font-sans, "Montserrat", Arial, sans-serif);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+  flex-shrink: 0;
+}
+
+.erp-print-sheet-top {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.erp-print-doc-header {
+  height: 15.2mm;
+  margin-bottom: 1.8mm;
+  border: 0.35mm solid #CBD5E1;
+  border-top: 0.9mm solid #2B5690;
+  background: #FFFFFF;
+  padding: 1.4mm 2.5mm;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3mm;
+  box-sizing: border-box;
+}
+
+.erp-print-doc-brand {
+  display: flex;
+  align-items: center;
+  gap: 3.2mm;
+  min-width: 0;
+}
+
+.erp-print-doc-brand-divider {
+  width: 0.3mm;
+  height: 9.5mm;
+  background: #E2E8F0;
+  flex-shrink: 0;
+}
+
+.erp-print-doc-meta-box {
+  width: 86mm;
+  flex-shrink: 0;
+  background: #F8FAFC;
+  border: 0.3mm solid #CBD5E1;
+  padding: 1.1mm 2.2mm;
+  font-size: 6.3pt;
+  line-height: 1.32;
+  color: #1E293B;
+  box-sizing: border-box;
+}
+
+/* Tabela fixa horizontalmente — 100% de 281mm sem corte lateral */
+.erp-print-table {
+  width: 281mm;
+  max-width: 281mm;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.erp-print-table th,
+.erp-print-table td {
+  border: 0.28mm solid #CBD5E1;
+  padding: 0;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.erp-print-table thead th {
+  height: 8.2mm;
+  border-color: #94A3B8;
+}
+
+.erp-print-sector-row td {
+  height: 5.8mm;
+  background: #EEF2F7;
+  border-color: #94A3B8;
+  border-left: 1.3mm solid #2B5690;
+  padding: 0 2.2mm;
+}
+
+.erp-print-collab-cell {
+  padding: 0.5mm 1.5mm !important;
+  text-align: left;
+  background: #FFFFFF;
+}
+
+.erp-print-collab-name {
+  font-size: 6.4pt;
+  font-weight: 700;
+  line-height: 1.18;
+  color: #0F172A;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.erp-print-collab-role {
+  font-size: 5.1pt;
+  font-weight: 500;
+  line-height: 1.15;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 0.25mm;
+}
+
+.erp-print-journey-cell {
+  background: #FAFAFA;
+  text-align: center;
+  padding: 0.4mm 0.8mm !important;
+}
+
+.erp-print-day-cell {
+  text-align: center;
+  padding: 0 !important;
+}
+
+.erp-print-doc-footer {
+  height: 7.4mm;
+  border: 0.3mm solid #CBD5E1;
+  background: #F8FAFC;
+  padding: 0.8mm 2.2mm;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 3mm;
+  box-sizing: border-box;
+  font-size: 5.3pt;
+  line-height: 1.28;
+  color: #334155;
+}
+
+@media print {
+  .erp-print-sheet {
+    box-shadow: none !important;
+    margin: 0 !important;
+    width: 297mm !important;
+    height: 210mm !important;
+    page-break-after: always;
+    break-after: page;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .erp-print-sheet:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}

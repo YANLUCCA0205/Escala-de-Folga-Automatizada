@@ -36,6 +36,11 @@ import {
   PopoverMenu,
   SearchInput,
 } from "../ui/index.jsx";
+import { buildSchedulePrintDocument } from "../domain/schedulePrintDocument.js";
+import { downloadSchedulePdf } from "../domain/schedulePdfExporter.js";
+import SchedulePrintPreviewModal, {
+  ScheduleDefaultPrintPortal,
+} from "./schedule/SchedulePrintPreviewModal.jsx";
 
 const BRUSH_TOOLS = [
   { id: "T", group: "Jornada", label: "Trabalhando (T)" },
@@ -91,6 +96,7 @@ export default function ScheduleGridModule({
   const [validationModalData, setValidationModalData] = useState(null);
   const [reopenModalOpen, setReopenModalOpen] = useState(false);
   const [reopenReasonText, setReopenReasonText] = useState("");
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
 
   const prevYearMonth = useMemo(() => getPreviousYearMonth(selectedYearMonth), [selectedYearMonth]);
   const nextYearMonth = useMemo(() => getNextYearMonth(selectedYearMonth), [selectedYearMonth]);
@@ -1544,11 +1550,27 @@ export default function ScheduleGridModule({
               )}
               items={[
                 {
-                  id: "print",
+                  id: "print_preview",
                   icon: "printer",
-                  label: "Imprimir planilha oficial (Paisagem A4)",
-                  onClick: () => window.print(),
+                  label: "Imprimir / Visualizar escala (A4 Paisagem)",
+                  onClick: () => setPrintPreviewOpen(true),
                 },
+                {
+                  id: "export_pdf_direct",
+                  icon: "fileText",
+                  label: "Salvar em PDF (Escala completa A4)",
+                  onClick: () => {
+                    const doc = buildSchedulePrintDocument({
+                      db,
+                      unitId: selectedUnitId,
+                      yearMonth: selectedYearMonth,
+                      sectorScope: "ALL",
+                      includeJourneyDetails: false,
+                    });
+                    downloadSchedulePdf(doc);
+                  },
+                },
+                { separator: true },
                 {
                   id: "export_csv",
                   icon: "download",
@@ -2984,6 +3006,24 @@ export default function ScheduleGridModule({
           </div>
         </div>
       )}
+
+      {/* VISUALIZAÇÃO PRÉVIA DOCUMENTAL A4 PAISAGEM + IMPRESSÃO FÍSICA E EXPORTAÇÃO PDF */}
+      {printPreviewOpen && (
+        <SchedulePrintPreviewModal
+          open
+          onClose={() => setPrintPreviewOpen(false)}
+          db={db}
+          unitId={selectedUnitId}
+          yearMonth={selectedYearMonth}
+          initialFilterSectorId={filterSectorId}
+        />
+      )}
+      <ScheduleDefaultPrintPortal
+        db={db}
+        unitId={selectedUnitId}
+        yearMonth={selectedYearMonth}
+        disabled={printPreviewOpen}
+      />
     </div>
   );
 }
