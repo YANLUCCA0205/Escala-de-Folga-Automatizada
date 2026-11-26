@@ -129,7 +129,6 @@ export async function createErpBackend({
     const migrations = [
       ["20261201000100_security_foundation", "supabase/migrations/20261201000100_security_foundation.sql"],
       ["20261201000200_partitioned_storage", "supabase/migrations/20261201000200_partitioned_storage.sql"],
-      ["20261201000400_master_direct_user_admin", "supabase/migrations/20261201000400_master_direct_user_admin.sql"],
     ];
 
     for (const [version, relFile] of migrations) {
@@ -140,6 +139,15 @@ export async function createErpBackend({
         await db.query("insert into auth.applied_migrations (version) values ($1)", [version]);
       }
     }
+
+    await db.exec("alter table auth.users add column if not exists email_confirmed_at timestamptz default now()");
+    const directAdminSql = fs
+      .readFileSync(
+        path.join(PROJECT_ROOT, "supabase/migrations/20261201000400_master_direct_user_admin.sql"),
+        "utf8"
+      )
+      .replace(/create extension if not exists pgcrypto[^;]*;/i, "");
+    await db.exec(directAdminSql);
 
     // Desativa exigência de MFA (2 fatores) em todos os níveis de serviço no banco local
     await db.exec(`

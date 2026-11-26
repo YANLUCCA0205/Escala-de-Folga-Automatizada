@@ -63,7 +63,9 @@ export default function UsersAccessModule({
   const [selectedUnits, setSelectedUnits] = useState([]);
   const [extraPerms, setExtraPerms] = useState([]);
   const [deniedPerms, setDeniedPerms] = useState([]);
-  const [deliveryMode, setDeliveryMode] = useState("invite_email");
+  const [deliveryMode, setDeliveryMode] = useState("temp_password");
+  const [customPassword, setCustomPassword] = useState("");
+  const [forceChangeOnFirstLogin, setForceChangeOnFirstLogin] = useState(false);
   const [showAdvancedPerms, setShowAdvancedPerms] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
@@ -136,7 +138,9 @@ export default function UsersAccessModule({
     setSelectedUnits(units[0] ? [units[0].id] : []);
     setExtraPerms([]);
     setDeniedPerms([]);
-    setDeliveryMode("invite_email");
+    setDeliveryMode("temp_password");
+    setCustomPassword("");
+    setForceChangeOnFirstLogin(false);
     setShowAdvancedPerms(false);
     setFormError("");
     setDrawerOpen(true);
@@ -181,6 +185,10 @@ export default function UsersAccessModule({
       setFormError("Selecione pelo menos uma unidade operacional autorizada.");
       return;
     }
+    if (!editingUser && deliveryMode === "custom_password" && customPassword.trim().length < 12) {
+      setFormError("A senha definida manualmente deve possuir pelo menos 12 caracteres.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -209,6 +217,9 @@ export default function UsersAccessModule({
             extraPermissions: extraPerms,
             deniedPermissions: deniedPerms,
             deliveryMode,
+            customPassword: deliveryMode === "custom_password" ? customPassword.trim() : undefined,
+            mustChangePassword:
+              deliveryMode === "custom_password" ? forceChangeOnFirstLogin : true,
           },
           supabaseClient
         );
@@ -676,28 +687,80 @@ export default function UsersAccessModule({
           )}
 
           {!editingUser && (
-            <Field
-              label="Método seguro de entrega inicial"
-              hint="Senhas temporárias e links possuem uso único e nunca podem ser consultados posteriormente."
-            >
-              {(id) => (
-                <Select
-                  id={id}
-                  value={deliveryMode}
-                  onChange={(e) => setDeliveryMode(e.target.value)}
+            <>
+              <Field
+                label="Método seguro de entrega inicial"
+                hint="Você pode gerar uma senha temporária automática ou definir diretamente a senha inicial do operador."
+              >
+                {(id) => (
+                  <Select
+                    id={id}
+                    value={deliveryMode}
+                    onChange={(e) => setDeliveryMode(e.target.value)}
+                  >
+                    <option value="temp_password">
+                      Gerar senha temporária criptográfica (troca obrigatória no 1º acesso)
+                    </option>
+                    <option value="custom_password">
+                      Definir senha inicial manualmente (conta já ativa para login)
+                    </option>
+                    <option value="invite_email">
+                      Enviar convite oficial por e-mail (Supabase Auth)
+                    </option>
+                    <option value="invite_link">
+                      Gerar link único de ativação (entrega manual sem SMTP)
+                    </option>
+                  </Select>
+                )}
+              </Field>
+
+              {deliveryMode === "custom_password" && (
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    padding: "10px 12px",
+                    border: "1px solid var(--erp-border)",
+                    borderRadius: 6,
+                    background: "var(--erp-surface-subtle)",
+                  }}
                 >
-                  <option value="invite_email">
-                    Enviar convite oficial por e-mail (Supabase Auth)
-                  </option>
-                  <option value="invite_link">
-                    Gerar link único de ativação (entrega manual sem SMTP)
-                  </option>
-                  <option value="temp_password">
-                    Gerar senha temporária criptográfica (troca obrigatória no 1º acesso)
-                  </option>
-                </Select>
+                  <Field
+                    label="Senha inicial do operador"
+                    required
+                    hint="Mínimo de 12 caracteres (maiúsculas, minúsculas, números e símbolos)."
+                  >
+                    {(id) => (
+                      <TextInput
+                        id={id}
+                        type="text"
+                        value={customPassword}
+                        onChange={(e) => setCustomPassword(e.target.value)}
+                        placeholder="Ex.: Operador@Uniao2026!"
+                        required
+                      />
+                    )}
+                  </Field>
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: "var(--erp-text-xs)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={forceChangeOnFirstLogin}
+                      onChange={(e) => setForceChangeOnFirstLogin(e.target.checked)}
+                    />
+                    <span>Exigir que o operador altere esta senha no primeiro acesso</span>
+                  </label>
+                </div>
               )}
-            </Field>
+            </>
           )}
 
           {role !== "MASTER" && (

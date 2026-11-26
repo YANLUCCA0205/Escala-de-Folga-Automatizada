@@ -4,6 +4,7 @@
 // =============================================================================
 
 import { useState, useEffect, useRef, useId } from "react";
+import { createPortal } from "react-dom";
 import Icon from "./Icon.jsx";
 
 export { Icon };
@@ -443,58 +444,110 @@ export function SidePanel({ open, onClose, title, subtitle, footer, width = 520,
 
 export function PopoverMenu({ trigger, items = [], align = "right" }) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState(null);
   const wrapRef = useRef(null);
+  const menuRef = useRef(null);
 
   useEffect(() => {
     if (!open) return undefined;
+
+    const updatePosition = () => {
+      if (!wrapRef.current || typeof window === "undefined") return;
+      const rect = wrapRef.current.getBoundingClientRect();
+      const viewportH = window.innerHeight || 800;
+      const viewportW = window.innerWidth || 1280;
+      const estimatedMenuH = Math.min(340, Math.max(120, items.length * 36 + 16));
+      const openUpward =
+        rect.bottom + estimatedMenuH + 12 > viewportH && rect.top > estimatedMenuH + 12;
+
+      setCoords({
+        top: openUpward ? undefined : Math.round(rect.bottom + 6),
+        bottom: openUpward ? Math.round(viewportH - rect.top + 6) : undefined,
+        left: align === "left" ? Math.max(8, Math.round(rect.left)) : undefined,
+        right:
+          align === "left" ? undefined : Math.max(8, Math.round(viewportW - rect.right)),
+      });
+    };
+
+    updatePosition();
+
     const handleOutside = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+      const clickedInsideTrigger = wrapRef.current && wrapRef.current.contains(e.target);
+      const clickedInsideMenu = menuRef.current && menuRef.current.contains(e.target);
+      if (!clickedInsideTrigger && !clickedInsideMenu) {
         setOpen(false);
       }
     };
     const handleKey = (e) => {
       if (e.key === "Escape") setOpen(false);
     };
+    const handleScrollOrResize = () => {
+      updatePosition();
+    };
+
     document.addEventListener("mousedown", handleOutside);
     window.addEventListener("keydown", handleKey);
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("scroll", handleScrollOrResize, true);
     return () => {
       document.removeEventListener("mousedown", handleOutside);
       window.removeEventListener("keydown", handleKey);
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
     };
-  }, [open]);
+  }, [open, align, items.length]);
+
+  const menuNode = open ? (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="erp-popover"
+      style={
+        coords
+          ? {
+              position: "fixed",
+              top: coords.top !== undefined ? coords.top : "auto",
+              bottom: coords.bottom !== undefined ? coords.bottom : "auto",
+              left: coords.left !== undefined ? coords.left : "auto",
+              right: coords.right !== undefined ? coords.right : 0,
+              zIndex: 2600,
+            }
+          : align === "left"
+            ? { left: 0, right: "auto" }
+            : { right: 0 }
+      }
+    >
+      {items.map((item, idx) => {
+        if (item.separator) {
+          return <div key={`sep_${idx}`} className="erp-menu-sep" role="separator" />;
+        }
+        return (
+          <button
+            key={item.id || idx}
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            onClick={() => {
+              setOpen(false);
+              if (item.onClick) item.onClick();
+            }}
+            className={`erp-menu-item ${item.danger ? "erp-menu-item--danger" : ""}`}
+          >
+            {item.icon && <Icon name={item.icon} size={15} />}
+            <span style={{ flex: 1 }}>{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
 
   return (
     <div ref={wrapRef} style={{ position: "relative", display: "inline-flex" }}>
       {trigger({ open, toggle: () => setOpen((v) => !v) })}
-      {open && (
-        <div
-          role="menu"
-          className="erp-popover"
-          style={align === "left" ? { left: 0, right: "auto" } : { right: 0 }}
-        >
-          {items.map((item, idx) => {
-            if (item.separator) {
-              return <div key={`sep_${idx}`} className="erp-menu-sep" role="separator" />;
-            }
-            return (
-              <button
-                key={item.id || idx}
-                type="button"
-                role="menuitem"
-                disabled={item.disabled}
-                onClick={() => {
-                  setOpen(false);
-                  if (item.onClick) item.onClick();
-                }}
-                className={`erp-menu-item ${item.danger ? "erp-menu-item--danger" : ""}`}
-              >
-                {item.icon && <Icon name={item.icon} size={15} />}
-                <span style={{ flex: 1 }}>{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {menuNode &&
+        (typeof document !== "undefined" && document.body
+          ? createPortal(menuNode, document.body)
+          : menuNode)}
     </div>
   );
 }

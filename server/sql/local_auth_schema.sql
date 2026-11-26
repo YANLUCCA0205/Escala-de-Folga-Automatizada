@@ -26,6 +26,7 @@ create table if not exists auth.users (
   email              text not null unique,
   encrypted_password text,
   full_name          text,
+  email_confirmed_at timestamptz default now(),
   last_sign_in_at    timestamptz,
   banned_until       timestamptz,
   created_at         timestamptz not null default now()

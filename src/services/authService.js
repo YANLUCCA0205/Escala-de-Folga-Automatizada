@@ -301,6 +301,14 @@ export async function signInOperator({ email, password }, client = getSupabaseCl
             "Não foi possível conectar ao servidor de identidade. Por segurança, o acesso permanece bloqueado.",
         };
       }
+      const errMsgLower = String(error.message || "").toLowerCase();
+      if (errMsgLower.includes("email not confirmed")) {
+        return {
+          ok: false,
+          message:
+            "O e-mail desta conta ainda consta como não confirmado no Supabase Auth. Execute a migration '20261201000400_master_direct_user_admin.sql' no SQL Editor do Supabase ou redefina a senha da conta pelo painel MASTER.",
+        };
+      }
       recordFailedLoginAttempt(cleanEmail);
       return { ok: false, message: GENERIC_LOGIN_ERROR_MESSAGE };
     }
@@ -619,8 +627,13 @@ async function invokeAdminUsersViaRpcFallback(payload, client) {
       : [];
     const extraPermissions = Array.isArray(payload.extraPermissions) ? payload.extraPermissions : [];
     const deniedPermissions = Array.isArray(payload.deniedPermissions) ? payload.deniedPermissions : [];
+    const customPassword = String(payload.customPassword || "").trim();
+    const requirePasswordChange =
+      payload.mustChangePassword !== undefined
+        ? Boolean(payload.mustChangePassword)
+        : !customPassword;
 
-    const oneTimeTempPassword = generateBrowserCryptographicTempPassword();
+    const initialPassword = customPassword || generateBrowserCryptographicTempPassword();
 
     // Cria cliente efêmero isolado (sem persistir sessão) para não substituir o token do MASTER
     const ephemeralClient = isSupabaseConfigured()
@@ -645,20 +658,20 @@ async function invokeAdminUsersViaRpcFallback(payload, client) {
         typeof window !== "undefined" ? `${window.location.origin}/?type=invite` : undefined;
       const { data: signUpData, error: signUpErr } = await ephemeralClient.auth.signUp({
         email,
-        password: oneTimeTempPassword,
+        password: initialPassword,
         options: {
           data: { full_name: fullName },
           emailRedirectTo: redirectTo,
         },
       });
       if (signUpErr) {
-        throw new Error(signUpErr.message || "Não foi possível criar a identidade no Supabase Auth.");
+        const lowerErr = String(signUpErr.message || "").toLowerCase();
+        if (!lowerErr.includes("already registered") && !lowerErr.includes("already exists")) {
+          throw new Error(signUpErr.message || "Não foi possível criar a identidade no Supabase Auth.");
+        }
+      } else {
+        createdUserId = signUpData?.user?.id || null;
       }
-      createdUserId = signUpData?.user?.id || null;
-    }
-
-    if (!createdUserId) {
-      throw new Error("Não foi possível obter o identificador do novo usuário no Supabase Auth.");
     }
 
     const { data: rpcRes, error: rpcErr } = await client.rpc("master_manage_user", {
@@ -668,10 +681,11 @@ async function invokeAdminUsersViaRpcFallback(payload, client) {
         email,
         fullName,
         role,
+        password: initialPassword,
         authorizedUnits: role === "MASTER" ? [] : authorizedUnits,
         extraPermissions,
         deniedPermissions,
-        mustChangePassword: true,
+        mustChangePassword: requirePasswordChange,
       },
     });
 
@@ -691,24 +705,40 @@ async function invokeAdminUsersViaRpcFallback(payload, client) {
     return {
       ok: true,
       profile: rpcRes.profile,
-      deliveryMode: "temp_password",
+      deliveryMode: customPassword ? "custom_password" : "temp_password",
       oneTimeInviteLink: null,
-      oneTimeTempPassword,
+      oneTimeTempPassword: initialPassword,
     };
   }
 
   // Demais ações administrativas (update_profile, set_status, revoke_sessions, reset_credentials)
+  let generatedTempPassword = null;
+  const enrichedPayload = { ...payload };
+
   if (action === "reset_credentials") {
-    const userId = String(payload.userId || "");
-    const { data: usersList } = await client.rpc("admin_list_users");
-    const targetUser = (usersList || []).find((u) => String(u.id) === userId);
-    if (targetUser?.email) {
-      await requestPasswordRecovery(targetUser.email, client);
+    const deliveryMode = payload.deliveryMode || "temp_password";
+    const customPassword = String(payload.customPassword || "").trim();
+    if (customPassword) {
+      generatedTempPassword = customPassword;
+      enrichedPayload.password = customPassword;
+      enrichedPayload.mustChangePassword = Boolean(payload.mustChangePassword);
+    } else if (deliveryMode === "temp_password") {
+      generatedTempPassword = generateBrowserCryptographicTempPassword();
+      enrichedPayload.password = generatedTempPassword;
+      enrichedPayload.mustChangePassword = true;
+    } else {
+      const userId = String(payload.userId || "");
+      const { data: usersList } = await client.rpc("admin_list_users");
+      const targetUser = (usersList || []).find((u) => String(u.id) === userId);
+      if (targetUser?.email) {
+        await requestPasswordRecovery(targetUser.email, client);
+      }
+      enrichedPayload.mustChangePassword = true;
     }
   }
 
   const { data: rpcRes, error: rpcErr } = await client.rpc("master_manage_user", {
-    p_payload: payload,
+    p_payload: enrichedPayload,
   });
 
   if (rpcErr) {
@@ -724,7 +754,10 @@ async function invokeAdminUsersViaRpcFallback(payload, client) {
     throw new Error(rpcRes?.message || rpcRes?.error || "Operação administrativa recusada.");
   }
 
-  return rpcRes;
+  return {
+    ...rpcRes,
+    oneTimeTempPassword: generatedTempPassword,
+  };
 }
 
 export async function invokeAdminUsers(payload, client = getSupabaseClient()) {
