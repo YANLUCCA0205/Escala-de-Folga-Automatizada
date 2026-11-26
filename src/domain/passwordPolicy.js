@@ -128,7 +128,7 @@ export function evaluatePassword(password, context = {}) {
   const notCommon = pwd.length > 0 && !isCommonPassword(pwd) && !hasTrivialSequenceOrRepeat(pwd);
 
   const rules = [
-    { id: "min_length", label: "Mínimo de 12 caracteres", ok: hasMinLen && hasMaxLen },
+    { id: "min_length", label: "Mínimo de 8 caracteres", ok: hasMinLen && hasMaxLen },
     { id: "uppercase", label: "Pelo menos uma letra maiúscula (A–Z)", ok: hasUpper },
     { id: "lowercase", label: "Pelo menos uma letra minúscula (a–z)", ok: hasLower },
     { id: "digit", label: "Pelo menos um número (0–9)", ok: hasDigit },
