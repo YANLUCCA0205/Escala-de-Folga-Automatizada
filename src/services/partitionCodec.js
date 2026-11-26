@@ -46,8 +46,8 @@ export function splitDatabaseIntoPartitions(db) {
   if (!db) return map;
 
   const units = Array.isArray(db.units) ? db.units : [];
-  const fallbackUnitId = units[0]?.id || "LOJA_03";
-  const allUnitIds = new Set(units.map((u) => u.id));
+  const fallbackUnitId = units[0]?.id || "";
+  const allUnitIds = new Set(units.map((u) => u.id).filter(Boolean));
 
   // Coleta qualquer unitId adicional referenciado nos registros
   for (const col of ["workPositions", "allocations", "unitSectors", "marketCalendarDays", "monthlySchedules"]) {

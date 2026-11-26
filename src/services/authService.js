@@ -71,6 +71,16 @@ export function isSupabaseConfigured() {
 
 let supabaseSingleton = null;
 
+// fila em memória no processo para serializar operações internas do GoTrueClient
+// sem depender de navigator.locks (evita deadlock circular quando SupabaseClient
+// dispara realtime.setAuth() -> auth.getSession() dentro de signInWithPassword)
+let inProcessAuthLockChain = Promise.resolve();
+async function safeInProcessAuthLock(_name, _acquireTimeout, fn) {
+  const run = inProcessAuthLockChain.then(fn, fn);
+  inProcessAuthLockChain = run.catch(() => {});
+  return await run;
+}
+
 export function getSupabaseClient() {
   purgeLegacyInsecureStorage();
   if (!supabaseSingleton) {
@@ -82,6 +92,7 @@ export function getSupabaseClient() {
           persistSession: true,
           autoRefreshToken: true,
           detectSessionInUrl: true,
+          lock: safeInProcessAuthLock,
         },
       });
     } else if (typeof window !== "undefined") {
@@ -168,7 +179,10 @@ export function detectUrlAuthFlow() {
 /**
  * Resolve o estado de controle de acesso a partir da sessão do Supabase e do perfil no banco (`my_profile`).
  */
-export async function resolveAuthGateState(client = getSupabaseClient(), { urlFlow = null } = {}) {
+export async function resolveAuthGateState(
+  client = getSupabaseClient(),
+  { urlFlow = null, skipSignOutOnEmptyProfile = false } = {}
+) {
   purgeLegacyInsecureStorage();
   if (!client) {
     return { gate: "unauthenticated", profile: null, unconfigured: true };
@@ -192,14 +206,18 @@ export async function resolveAuthGateState(client = getSupabaseClient(), { urlFl
       if (isNetworkError(profErr)) {
         return { gate: "service_unavailable", profile: null };
       }
-      // Sessão inválida/revogada no servidor
-      await client.auth.signOut({ scope: "local" }).catch(() => {});
+      if (!skipSignOutOnEmptyProfile) {
+        // Sessão inválida/revogada no servidor
+        await client.auth.signOut({ scope: "local" }).catch(() => {});
+      }
       return { gate: "session_expired", profile: null };
     }
 
     if (!profile) {
       // `private.session_is_valid()` retornou falso -> sessão revogada no banco!
-      await client.auth.signOut({ scope: "local" }).catch(() => {});
+      if (!skipSignOutOnEmptyProfile) {
+        await client.auth.signOut({ scope: "local" }).catch(() => {});
+      }
       return { gate: "session_expired", profile: null };
     }
 
@@ -223,7 +241,13 @@ export async function resolveAuthGateState(client = getSupabaseClient(), { urlFl
       return { gate: "set_password_forced", profile };
     }
 
-    // Verificação de 2 fatores (MFA/TOTP) desativada em todos os níveis de serviço
+    if (profile.mfaRequired && profile.aal !== "aal2") {
+      return {
+        gate: profile.mfaEnrolled ? "mfa_verify_required" : "mfa_enroll_required",
+        profile,
+      };
+    }
+
     return { gate: "authenticated", profile };
   } catch (err) {
     if (isNetworkError(err)) {
@@ -287,8 +311,19 @@ export async function signInOperator({ email, password }, client = getSupabaseCl
     }
 
     clearFailedLoginAttempts(cleanEmail);
+
+    // A partir deste ponto a credencial já foi validada e a sessão foi emitida pelo Supabase Auth.
+    // Qualquer eventual oscilação na telemetria de auditoria ou na leitura do perfil não deve
+    // ser classificada como erro de e-mail/senha inválidos nem incrementar o rate limit.
     await client.rpc("record_auth_event", { p_event: "LOGIN" }).catch(() => {});
-    const resolved = await resolveAuthGateState(client);
+
+    let resolved = await resolveAuthGateState(client, { skipSignOutOnEmptyProfile: true });
+    if (resolved.gate === "unauthenticated" || resolved.gate === "session_expired") {
+      // Aguarda um ciclo curto caso a propagação da sessão em auth.sessions esteja concluindo
+      await new Promise((r) => setTimeout(r, 120));
+      resolved = await resolveAuthGateState(client);
+    }
+
     return { ok: true, ...resolved };
   } catch (err) {
     if (isNetworkError(err)) {
@@ -298,6 +333,17 @@ export async function signInOperator({ email, password }, client = getSupabaseCl
         message:
           "Serviço de autenticação indisponível no momento. Tente novamente em instantes.",
       };
+    }
+    // Se a sessão já tiver sido gravada no storage apesar de uma exceção pós-login,
+    // recupera o estado real da sessão em vez de exibir falso erro de credenciais.
+    try {
+      const recovered = await resolveAuthGateState(client);
+      if (recovered?.gate && recovered.gate !== "unauthenticated") {
+        clearFailedLoginAttempts(cleanEmail);
+        return { ok: true, ...recovered };
+      }
+    } catch {
+      // Prossegue para retorno padrão se realmente não houver sessão
     }
     recordFailedLoginAttempt(cleanEmail);
     return { ok: false, message: GENERIC_LOGIN_ERROR_MESSAGE };

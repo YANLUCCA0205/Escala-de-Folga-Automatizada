@@ -167,15 +167,30 @@ export default function OrganizationAndPositionsModule({
     if (!unitCode.trim() || !unitName.trim()) return;
     const cleanCode = unitCode.trim().toUpperCase();
     const cleanName = unitName.trim().toUpperCase();
+    const createdUnitId = editingUnitId
+      ? null
+      : `UNIT_${cleanCode}_${Date.now().toString().slice(-3)}`;
 
     onMutateDb({
       permission: "MANAGE_STRUCTURE",
       module: "ESTRUTURA_ORGANIZACIONAL",
       action: editingUnitId ? "EDITAR_UNIDADE" : "CRIAR_UNIDADE",
       entityType: "UNIT",
-      entityId: editingUnitId || `LOJA_${cleanCode}`,
+      entityId: editingUnitId || createdUnitId,
       summary: `${editingUnitId ? "Atualizada" : "Criada"} unidade operacional "${cleanName}" (${cleanCode}).`,
       updater: (draft) => {
+        if (!Array.isArray(draft.units)) draft.units = [];
+        if (!Array.isArray(draft.companies) || draft.companies.length === 0) {
+          draft.companies = [
+            {
+              id: "comp_default",
+              legalName: compLegalName.trim() || "União Supermercados",
+              tradeName: compTradeName.trim() || "União Supermercados",
+              cnpj: compCnpj.trim() || "",
+              active: true,
+            },
+          ];
+        }
         if (editingUnitId) {
           const idx = draft.units.findIndex((u) => u.id === editingUnitId);
           if (idx >= 0) {
@@ -188,9 +203,8 @@ export default function OrganizationAndPositionsModule({
             };
           }
         } else {
-          const newId = `UNIT_${cleanCode}_${Date.now().toString().slice(-3)}`;
           draft.units.push({
-            id: newId,
+            id: createdUnitId,
             companyId: draft.companies[0]?.id || "comp_default",
             code: cleanCode,
             name: cleanName,
@@ -201,6 +215,9 @@ export default function OrganizationAndPositionsModule({
         }
       },
     });
+    if (createdUnitId && setSelectedUnitId) {
+      setSelectedUnitId(createdUnitId);
+    }
     setEditingUnitId(null);
     setUnitCode("");
     setUnitName("");
@@ -228,13 +245,15 @@ export default function OrganizationAndPositionsModule({
             sec.code = newSectorCode.trim().toUpperCase();
             sec.minDailyCoverage = minWeekday;
           }
-          let us = draft.unitSectors.find(
-            (u) => u.unitId === selectedUnitId && u.sectorId === editingSectorId
-          );
+          let us = selectedUnitId
+            ? draft.unitSectors.find(
+                (u) => u.unitId === selectedUnitId && u.sectorId === editingSectorId
+              )
+            : null;
           if (us) {
             us.minDailyCoverage = minWeekday;
             us.minSundayCoverage = minSun;
-          } else {
+          } else if (selectedUnitId) {
             draft.unitSectors.push({
               id: `us_${selectedUnitId}_${editingSectorId}`,
               unitId: selectedUnitId,
@@ -254,14 +273,16 @@ export default function OrganizationAndPositionsModule({
             active: true,
           };
           draft.sectors.push(secObj);
-          draft.unitSectors.push({
-            id: `us_${selectedUnitId}_${secObj.id}`,
-            unitId: selectedUnitId,
-            sectorId: secObj.id,
-            minDailyCoverage: minWeekday,
-            minSundayCoverage: minSun,
-            active: true,
-          });
+          if (selectedUnitId) {
+            draft.unitSectors.push({
+              id: `us_${selectedUnitId}_${secObj.id}`,
+              unitId: selectedUnitId,
+              sectorId: secObj.id,
+              minDailyCoverage: minWeekday,
+              minSundayCoverage: minSun,
+              active: true,
+            });
+          }
         }
       },
     });
@@ -316,6 +337,7 @@ export default function OrganizationAndPositionsModule({
   // Geração automática de N postos numerados
   const handleCreateBatchPositions = (e) => {
     e.preventDefault();
+    if (!selectedUnitId) return;
     const role = rolesById[genRoleId];
     if (!role) return;
 
@@ -935,7 +957,32 @@ export default function OrganizationAndPositionsModule({
         </div>
       )}
 
-      {activeSection === "positions" && (
+      {activeSection === "positions" && !selectedUnitId && (
+        <div style={ui.card}>
+          <div style={ui.cardTitle}>Quadro de postos e vagas</div>
+          <div style={{ fontSize: 13, color: "var(--erp-ink-secondary)", lineHeight: 1.5 }}>
+            Cadastre primeiro ao menos uma unidade operacional na aba{" "}
+            <button
+              type="button"
+              onClick={() => setActiveSection("units")}
+              style={{
+                border: "none",
+                background: "transparent",
+                padding: 0,
+                color: "var(--erp-brand-blue)",
+                fontWeight: 700,
+                cursor: "pointer",
+                textDecoration: "underline",
+              }}
+            >
+              Unidades
+            </button>{" "}
+            para dimensionar o quadro de postos e vagas da filial.
+          </div>
+        </div>
+      )}
+
+      {activeSection === "positions" && Boolean(selectedUnitId) && (
         <>
           <div style={ui.card}>
             <div style={ui.cardTitle}>

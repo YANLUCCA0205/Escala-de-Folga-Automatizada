@@ -133,12 +133,25 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabaseClient.auth.onAuthStateChange((event) => {
+    } = supabaseClient.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
       if (event === "PASSWORD_RECOVERY") {
-        resolveAuthGateState(supabaseClient, { urlFlow: "recovery" }).then((r) => {
-          if (mounted) setAuthState(r);
-        });
+        setTimeout(() => {
+          if (!mounted) return;
+          resolveAuthGateState(supabaseClient, { urlFlow: "recovery" }).then((r) => {
+            if (mounted) setAuthState(r);
+          });
+        }, 0);
+      } else if (event === "SIGNED_IN" && session?.user) {
+        // Despacha fora do callback síncrono do GoTrueClient para evitar deadlock de lock
+        setTimeout(() => {
+          if (!mounted) return;
+          resolveAuthGateState(supabaseClient).then((r) => {
+            if (mounted && r.gate && r.gate !== "unauthenticated") {
+              setAuthState(r);
+            }
+          });
+        }, 0);
       } else if (event === "SIGNED_OUT") {
         setDb(null);
         partitionsRef.current = new Map();
@@ -565,6 +578,13 @@ export default function App() {
   // ---------------------------------------------------------------------------
   const activeModuleKey = effectiveNavItem?.moduleKey || "schedules";
   const activeParams = effectiveNavItem?.params || {};
+  const canManageStructure =
+    activeProfile?.role === "MASTER" || visualPermissions.includes("MANAGE_STRUCTURE");
+  const isUnitIndependentModule =
+    activeModuleKey.startsWith("admin_") ||
+    activeModuleKey === "organization" ||
+    activeModuleKey === "rules_shifts";
+  const isEmptyEnvironmentWithoutUnits = (db?.units || []).filter((u) => u.active !== false).length === 0;
 
   return (
     <AppShell
@@ -632,11 +652,39 @@ export default function App() {
           <Spinner size={16} />
           <span>Carregando partições autorizadas...</span>
         </div>
-      ) : availableUnits.length === 0 && !activeModuleKey.startsWith("admin_") ? (
-        <Alert tone="warning" title="Nenhuma unidade operacional vinculada">
-          Sua conta não possui filiais autorizadas para consulta operacional. Solicite a atribuição
-          de unidades ao administrador MASTER.
-        </Alert>
+      ) : availableUnits.length === 0 && !isUnitIndependentModule ? (
+        isEmptyEnvironmentWithoutUnits && canManageStructure ? (
+          <Alert tone="info" title="Ambiente inicializado — Cadastre a primeira unidade operacional">
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <span>
+                Este ambiente ainda não possui empresas ou unidades operacionais cadastradas.
+                Inicie a configuração estrutural cadastrando a empresa e a primeira filial
+                diretamente pela interface.
+              </span>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="erp-btn erp-btn--primary erp-btn--sm"
+                  onClick={() => setActiveNavId("org_units")}
+                >
+                  Cadastrar primeira unidade
+                </button>
+                <button
+                  type="button"
+                  className="erp-btn erp-btn--secondary erp-btn--sm"
+                  onClick={() => setActiveNavId("org_companies")}
+                >
+                  Configurar dados da empresa
+                </button>
+              </div>
+            </div>
+          </Alert>
+        ) : (
+          <Alert tone="warning" title="Nenhuma unidade operacional vinculada">
+            Sua conta não possui filiais autorizadas para consulta operacional. Solicite a atribuição
+            de unidades ao administrador MASTER.
+          </Alert>
+        )
       ) : (
         <Suspense
           fallback={

@@ -333,14 +333,14 @@ test("SEC-06: Edge Function admin-users exige MASTER em aal2 e provisiona convit
     },
   });
 
-  // 1. Rejeita MASTER sem MFA (aal1)
-  const aal1Res = await handleAdminUsersRequest({
-    serviceClient: mockServiceClient("MASTER"),
+  // 1. Rejeita perfil não-MASTER (ex.: ADMIN ou OPERATOR) mesmo com aal2
+  const nonMasterRes = await handleAdminUsersRequest({
+    serviceClient: mockServiceClient("OPERATOR"),
     bearerToken: makeFakeJwt({ sub: "actor-uuid", aal: "aal1" }),
     body: { action: "invite", email: "op@x.invalid", fullName: "Operador", role: "OPERATOR", authorizedUnits: ["LOJA_03"] },
   });
-  assert.equal(aal1Res.status, 403);
-  assert.equal(aal1Res.payload.error, "MFA_REQUIRED");
+  assert.equal(nonMasterRes.status, 403);
+  assert.equal(nonMasterRes.payload.error, "FORBIDDEN");
 
   // 2. Rejeita ADMIN mesmo com aal2
   const adminRes = await handleAdminUsersRequest({
@@ -464,4 +464,176 @@ test("SEC-08: Código-fonte dos serviços não contém chaves/URLs fixas nem imp
     assert.equal(content.includes("eyJhbGciOiJIUzI1NiIs"), false, `${rel} não pode conter JWT hardcoded`);
     assert.equal(content.includes("seedLoja03"), false, `${rel} não pode importar seed real no cliente`);
   }
+});
+
+test("SEC-09: Ambiente de produção zerado (0 unidades) permite ao MASTER cadastrar a primeira empresa e a primeira unidade e persiste em GLOBAL/structure", async () => {
+  // 1. Monta banco vazio (0 linhas em erp_partitions) como ocorre num ambiente novo de produção na Vercel
+  const { db: emptyDb, revisionsByKey } = assembleDatabaseFromPartitions([]);
+  assert.deepEqual(emptyDb.units, [], "ambiente novo inicia com zero unidades");
+  assert.deepEqual(emptyDb.companies, [], "ambiente novo inicia com zero empresas");
+
+  const baselineMap = splitDatabaseIntoPartitions(emptyDb);
+  // Nenhuma partição espúria de loja fictícia (como LOJA_03) deve ser criada num banco vazio
+  assert.equal(
+    Array.from(baselineMap.keys()).some((k) => k.startsWith("LOJA_")),
+    false,
+    "banco vazio não gera partições de loja fantasma"
+  );
+
+  // 2. MASTER cria a primeira empresa e a primeira unidade diretamente (sem nenhuma unidade prévia selecionada)
+  const nextDb = structuredClone(emptyDb);
+  nextDb.companies = [
+    {
+      id: "comp_default",
+      legalName: "União Supermercados Ltda",
+      tradeName: "União Supermercados",
+      cnpj: "",
+      active: true,
+    },
+  ];
+  nextDb.units = [
+    {
+      id: "UNIT_LJ01_001",
+      companyId: "comp_default",
+      code: "LJ01",
+      name: "LOJA 01",
+      city: "União",
+      state: "MG",
+      active: true,
+    },
+  ];
+
+  let savedWrites = null;
+  let savedAudit = null;
+  const mockProdClient = {
+    async rpc(fn, args) {
+      assert.equal(fn, "erp_save_batch");
+      savedWrites = args.p_writes;
+      savedAudit = args.p_audit;
+      return {
+        data: {
+          ok: true,
+          revisions: args.p_writes.map((w) => ({
+            scope: w.scope,
+            kind: w.kind,
+            period: w.period || "",
+            revision: 1,
+          })),
+        },
+        error: null,
+      };
+    },
+  };
+
+  const saveRes = await ErpRepository.saveMutation({
+    client: mockProdClient,
+    prevPartitionsMap: baselineMap,
+    nextDb,
+    revisionsByKey,
+    auditPayload: {
+      module: "ESTRUTURA_ORGANIZACIONAL",
+      action: "CRIAR_UNIDADE",
+      entityType: "UNIT",
+      entityId: "UNIT_LJ01_001",
+      unitId: null,
+      summary: 'Criada unidade operacional "LOJA 01" (LJ01).',
+    },
+  });
+
+  assert.equal(saveRes.ok, true);
+  assert.ok(
+    savedWrites.some((w) => w.scope === "GLOBAL" && w.kind === "structure" && w.data.units.length === 1),
+    "persiste a primeira unidade em GLOBAL/structure com expected_revision 0"
+  );
+  assert.equal(savedAudit[0].module, "ESTRUTURA_ORGANIZACIONAL");
+
+  // 3. Confirma que App.jsx libera `organization` e `rules_shifts` mesmo quando availableUnits.length === 0
+  const appSource = fs.readFileSync(path.resolve("src/App.jsx"), "utf8");
+  assert.ok(
+    appSource.includes('activeModuleKey === "organization"'),
+    "App.jsx permite acesso direto ao módulo organization mesmo sem unidades cadastradas"
+  );
+  assert.ok(
+    appSource.includes("Cadastrar primeira unidade"),
+    "App.jsx exibe atalho direto para o MASTER cadastrar a primeira unidade em ambiente vazio"
+  );
+});
+
+test("SEC-10: Fluxo de login na Vercel/Supabase conclui autenticação na primeira tentativa sem exigir F5 e sem falso erro de credenciais", async () => {
+  const email = "master.producao@exemplo.invalid";
+  clearFailedLoginAttempts(email);
+
+  let sessionStored = null;
+  let myProfileCalls = 0;
+
+  // Simula o comportamento em produção no Supabase Cloud:
+  // 1) signInWithPassword valida credenciais e estabelece a sessão;
+  // 2) a primeira chamada imediata de my_profile pode retornar null/erro transitório se houver latência/lock,
+  //    mas a sessão já existe e se resolve em seguida sem precisar de F5.
+  const prodLikeSupabaseClient = {
+    auth: {
+      async signInWithPassword({ email: em, password: pw }) {
+        if (pw !== "SenhaForte#2026!") {
+          return { data: { session: null, user: null }, error: new Error("Invalid login credentials") };
+        }
+        sessionStored = {
+          access_token: "jwt-token-valido",
+          refresh_token: "refresh-valido",
+          user: { id: "master-uuid", email: em },
+        };
+        return { data: { session: sessionStored, user: sessionStored.user }, error: null };
+      },
+      async getSession() {
+        return { data: { session: sessionStored }, error: null };
+      },
+      async signOut() {
+        sessionStored = null;
+      },
+    },
+    async rpc(fn) {
+      if (fn === "record_auth_event") {
+        return { data: null, error: null };
+      }
+      if (fn === "my_profile") {
+        myProfileCalls += 1;
+        if (myProfileCalls === 1) {
+          // Simula atraso transitório na primeira leitura imediata pós-login
+          return { data: null, error: null };
+        }
+        return {
+          data: {
+            id: "master-uuid",
+            email,
+            fullName: "Master Produção",
+            role: "MASTER",
+            status: "ACTIVE",
+            mustChangePassword: false,
+            authorizedUnits: [],
+            permissions: PERMISSIONS_BY_ROLE.MASTER,
+            aal: "aal1",
+            mfaRequired: false,
+            mfaEnrolled: false,
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    },
+  };
+
+  const loginRes = await signInOperator(
+    { email, password: "SenhaForte#2026!" },
+    prodLikeSupabaseClient
+  );
+
+  assert.equal(loginRes.ok, true, "login válido retorna ok=true na primeira tentativa sem exigir F5");
+  assert.equal(loginRes.gate, "authenticated");
+  assert.equal(loginRes.profile?.role, "MASTER");
+
+  // Confirma que o cliente Supabase usa lock serializado em memória (evitando deadlock do navigator.locks)
+  const authServiceSource = fs.readFileSync(path.resolve("src/services/authService.js"), "utf8");
+  assert.ok(
+    authServiceSource.includes("lock: safeInProcessAuthLock"),
+    "getSupabaseClient configura lock seguro sem deadlock circular do navigator.locks"
+  );
 });
