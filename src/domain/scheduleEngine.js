@@ -1557,11 +1557,21 @@ export function computeWorkforceAnalytics({
   sectorsById = {},
   rolesById = {},
 }) {
+  const isPositionVisibleInUnit = (pos) => {
+    if (!unitId) return true;
+    if (pos.unitId === unitId) return true;
+    if (!pos.isSharedRateio) return false;
+    if (Array.isArray(pos.authorizedUnitIds) && pos.authorizedUnitIds.length > 0) {
+      return pos.authorizedUnitIds.includes(unitId);
+    }
+    return true;
+  };
+
   const unitPositions = workPositions.filter(
-    (p) => (!unitId || p.unitId === unitId) && p.status !== "DEACTIVATED"
+    (p) => isPositionVisibleInUnit(p) && p.status !== "DEACTIVATED"
   );
   const deactivatedPositions = workPositions.filter(
-    (p) => (!unitId || p.unitId === unitId) && p.status === "DEACTIVATED"
+    (p) => isPositionVisibleInUnit(p) && p.status === "DEACTIVATED"
   );
 
   const monthStart = `${yearMonth}-01`;

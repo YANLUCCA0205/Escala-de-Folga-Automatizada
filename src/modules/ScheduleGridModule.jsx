@@ -141,8 +141,29 @@ export default function ScheduleGridModule({
         ids.add(emp.id);
       }
     }
+    const rateioPosIds = new Set(
+      (db.workPositions || [])
+        .filter(
+          (p) =>
+            p.isSharedRateio &&
+            p.status !== "DEACTIVATED" &&
+            (!Array.isArray(p.authorizedUnitIds) ||
+              p.authorizedUnitIds.length === 0 ||
+              p.authorizedUnitIds.includes(selectedUnitId))
+        )
+        .map((p) => p.id)
+    );
+    for (const a of db.allocations || []) {
+      if (
+        rateioPosIds.has(a.workPositionId) &&
+        a.startDate <= `${selectedYearMonth}-31` &&
+        (!a.endDate || a.endDate >= `${selectedYearMonth}-01`)
+      ) {
+        ids.add(a.employeeId);
+      }
+    }
     return ids;
-  }, [db.employees, selectedUnitId]);
+  }, [db.employees, db.workPositions, db.allocations, selectedUnitId, selectedYearMonth]);
 
   const monthEntries = useMemo(
     () =>
@@ -1169,6 +1190,12 @@ export default function ScheduleGridModule({
           if (directPosIds.has(p.id) || p.sectorId !== sec.id || p.status === "DEACTIVATED") {
             return false;
           }
+          const isRateioPosVisible =
+            Boolean(p.isSharedRateio) &&
+            (!Array.isArray(p.authorizedUnitIds) ||
+              p.authorizedUnitIds.length === 0 ||
+              p.authorizedUnitIds.includes(selectedUnitId));
+          if (isRateioPosVisible) return true;
           const alloc = db.allocations.find(
             (a) =>
               a.workPositionId === p.id &&
@@ -1994,7 +2021,13 @@ export default function ScheduleGridModule({
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <UniaoLogo variant="original" size="sm" idSuffix="grid_hdr" />
             <span style={{ fontWeight: 600, color: "var(--erp-ink-secondary)" }}>
-              {db.companies[0]?.legalName} · CNPJ {db.companies[0]?.cnpj}
+              {activeUnitObj?.legalName || activeUnitObj?.name || db.companies[0]?.tradeName || ""}
+              {" · "}
+              {activeUnitObj?.cnpj ? (
+                `CNPJ ${activeUnitObj.cnpj}`
+              ) : (
+                <span style={{ color: "#b45309" }}>CNPJ pendente (completar cadastro da unidade)</span>
+              )}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -2635,8 +2668,15 @@ export default function ScheduleGridModule({
             }{" "}
             COLABORADORES (+{" "}
             {
-              db.workPositions.filter((p) => p.unitId === selectedUnitId && p.isSharedRateio)
-                .length
+              db.workPositions.filter(
+                (p) =>
+                  p.status !== "DEACTIVATED" &&
+                  p.isSharedRateio &&
+                  (p.unitId === selectedUnitId ||
+                    !Array.isArray(p.authorizedUnitIds) ||
+                    p.authorizedUnitIds.length === 0 ||
+                    p.authorizedUnitIds.includes(selectedUnitId))
+              ).length
             }{" "}
             POSTOS DE RATEIO COMPARTILHADO)
           </div>
@@ -2869,7 +2909,7 @@ export default function ScheduleGridModule({
         <div style={ui.modalBackdrop}>
           <div style={{ ...ui.modalCard, width: 520 }}>
             <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>
-              🛠️ Construir Escala Manual ({selectedYearMonth} · {selectedUnitId})
+              🛠️ Construir Escala Manual ({selectedYearMonth} · {activeUnitObj?.name || activeUnitObj?.code || selectedUnitId})
             </div>
             <div style={{ fontSize: 12, color: "#475569", marginBottom: 14 }}>
               Escolha como deseja iniciar ou estruturar a construção manual desta competência. Após concluir, valide a escala para que ela alimente automaticamente o próximo mês ({nextYearMonth}).
@@ -2947,7 +2987,7 @@ export default function ScheduleGridModule({
               🧹 Confirmar Limpeza dos Lançamentos de {selectedYearMonth}
             </div>
             <div style={{ fontSize: 12, color: "#334155", lineHeight: 1.5, marginBottom: 14 }}>
-              Esta operação irá redefinir para <strong>Vazio (—)</strong> todos os lançamentos de trabalho e folga dos colaboradores da unidade <strong>{selectedUnitId}</strong> na competência <strong>{selectedYearMonth}</strong>.
+              Esta operação irá redefinir para <strong>Vazio (—)</strong> todos os lançamentos de trabalho e folga dos colaboradores da unidade <strong>{activeUnitObj?.name || activeUnitObj?.code || selectedUnitId}</strong> na competência <strong>{selectedYearMonth}</strong>.
               <br />
               <br />
               ✅ <strong>Serão preservados automaticamente:</strong> Férias (`FÉR`), Licenças (`LM`/`INSS`), datas de Admissão (`ADM`), Desligamentos (`DEM`) e dias de Mercado Fechado (`FECH`).
@@ -2974,7 +3014,7 @@ export default function ScheduleGridModule({
         <div style={ui.modalBackdrop}>
           <div style={{ ...ui.modalCard, width: 620 }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#0f172a", marginBottom: 6 }}>
-              ✓ Checklist Oficial de Validação da Escala ({selectedYearMonth} · {selectedUnitId})
+              ✓ Checklist Oficial de Validação da Escala ({selectedYearMonth} · {activeUnitObj?.name || activeUnitObj?.code || selectedUnitId})
             </div>
             <div style={{ fontSize: 12, color: "#475569", marginBottom: 12 }}>
               A validação consolida o estado final do ciclo (`cycleStates`) de cada colaborador para garantir continuidade exata no mês seguinte (<strong>{nextYearMonth}</strong>).

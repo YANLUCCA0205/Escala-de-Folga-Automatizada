@@ -571,6 +571,12 @@ export function listPrintableUnitSectors({ db, unitId, yearMonth }) {
         const emp = employeesById[alloc.employeeId];
         if (!emp || !String(emp.fullName || "").trim()) return false;
         if (pos.unitId === unitId) return true;
+        if (pos.isSharedRateio) {
+          if (Array.isArray(pos.authorizedUnitIds) && pos.authorizedUnitIds.length > 0) {
+            return pos.authorizedUnitIds.includes(unitId);
+          }
+          return true;
+        }
         return Boolean(emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId));
       });
 
@@ -649,8 +655,28 @@ export function buildSchedulePrintDocument({
       .map((c) => [c.calendarDate, c])
   );
 
+  const sharedRateioEmpIds = new Set();
+  for (const pos of db?.workPositions || []) {
+    if (!pos?.isSharedRateio || pos.status === "DEACTIVATED") continue;
+    const visibleInUnit =
+      !Array.isArray(pos.authorizedUnitIds) ||
+      pos.authorizedUnitIds.length === 0 ||
+      pos.authorizedUnitIds.includes(unitId);
+    if (!visibleInUnit) continue;
+    for (const a of db?.allocations || []) {
+      if (
+        a.workPositionId === pos.id &&
+        a.startDate <= lastDay &&
+        (!a.endDate || a.endDate >= firstDay)
+      ) {
+        sharedRateioEmpIds.add(a.employeeId);
+      }
+    }
+  }
+
   const rawMonthEntries = (db?.dailyEntriesByMonth?.[yearMonth] || []).filter((e) => {
     if (!e.unitId || e.unitId === unitId) return true;
+    if (sharedRateioEmpIds.has(e.employeeId)) return true;
     const emp = employeesById[e.employeeId];
     return Boolean(emp?.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId));
   });
@@ -718,8 +744,14 @@ export function buildSchedulePrintDocument({
 
       const emp = employeesById[alloc.employeeId];
       if (!emp || !String(emp.fullName || "").trim()) continue;
+      const isRateioPosVisible =
+        Boolean(pos.isSharedRateio) &&
+        (!Array.isArray(pos.authorizedUnitIds) ||
+          pos.authorizedUnitIds.length === 0 ||
+          pos.authorizedUnitIds.includes(unitId));
       if (
         pos.unitId !== unitId &&
+        !isRateioPosVisible &&
         !(emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId))
       ) {
         continue;
@@ -906,6 +938,19 @@ export function buildSchedulePrintDocument({
       ? `Setores selecionados (${totalSectors} de ${allAvailableUnitSectors.length})`
       : `Escala completa (${totalSectors} setor${totalSectors === 1 ? "" : "es"})`;
 
+  const unitAddressParts = [
+    unit.street ? [unit.street, unit.number].filter(Boolean).join(", ") : "",
+    unit.complement || "",
+    unit.neighborhood || "",
+    [unit.city, unit.state].filter(Boolean).join("/"),
+    unit.zipCode ? `CEP ${unit.zipCode}` : "",
+  ].filter(Boolean);
+  const unitAddressLine = unitAddressParts.join(" · ");
+  const unitFiscalBase = unit.legalName || company.tradeName || unit.name || unitId;
+  const unitFiscalLabel = unit.cnpj
+    ? `${unitFiscalBase} · CNPJ ${unit.cnpj}`
+    : `${unitFiscalBase} · CNPJ não informado (completar cadastro)`;
+
   return {
     geometry: {
       ...PRINT_GEOMETRY_MM,
@@ -914,11 +959,17 @@ export function buildSchedulePrintDocument({
       dayColWidthMm: Number(dayColWidthMm.toFixed(4)),
     },
     companyName: company.tradeName || company.legalName || "União Supermercados",
-    companyLegalName: company.legalName || "Grupo União Supermercados",
+    companyLegalName: unit.legalName || company.legalName || "Grupo União Supermercados",
     unitId,
     unitCode: unit.code || unitId,
     unitName: unit.name || unitId,
+    unitLegalName: unit.legalName || "",
+    unitCnpj: unit.cnpj || "",
+    unitEstablishmentType: unit.establishmentType || "",
     unitCity: unit.city || "",
+    unitState: unit.state || "",
+    unitAddressLine,
+    unitFiscalLabel,
     yearMonth,
     competenceLabel: formatCompetenceLabel(yearMonth),
     scheduleStatus: monthlySchedule.status || "DRAFT",

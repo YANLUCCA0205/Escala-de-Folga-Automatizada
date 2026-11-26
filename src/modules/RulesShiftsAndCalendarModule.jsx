@@ -100,6 +100,9 @@ export default function RulesShiftsAndCalendarModule({
   const [subTab, setSubTab] = useState(
     initialTab === "calendar" ? "calendar" : "rules"
   );
+  const unitsById = Object.fromEntries((db.units || []).map((u) => [u.id, u]));
+  const selectedUnitLabel =
+    unitsById[selectedUnitId]?.name || unitsById[selectedUnitId]?.code || selectedUnitId || "Unidade";
 
   // ───────────────────────────────────────────────────────────────────────────
   // 1. ESTADO DO CALENDÁRIO OPERACIONAL DO MERCADO (Com Edição e Filtro de Loja)
@@ -549,7 +552,7 @@ export default function RulesShiftsAndCalendarModule({
           onClick={() => setSubTab("calendar")}
           style={subTab === "calendar" ? ui.subTabActive : ui.subTab}
         >
-          🗓️ Calendário Operacional — {selectedUnitId} ({unitCalendarDays.length} datas)
+          🗓️ Calendário Operacional — {selectedUnitLabel} ({unitCalendarDays.length} datas)
         </button>
       </div>
 
@@ -558,11 +561,11 @@ export default function RulesShiftsAndCalendarModule({
           <div style={ui.card}>
             <div style={ui.cardTitle}>
               {editingCalId
-                ? `✏️ Editar Data do Calendário Operacional (${selectedUnitId})`
-                : `🏪 Configurar Dias de Abertura do Mercado — Unidade ${selectedUnitId}`}
+                ? `✏️ Editar Data do Calendário Operacional (${selectedUnitLabel})`
+                : `🏪 Configurar Dias de Abertura do Mercado — Unidade ${selectedUnitLabel}`}
             </div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
-              Define como a loja <strong>{selectedUnitId}</strong> opera em datas específicas: <strong>Dia Inteiro (Normal)</strong>, <strong>Meio Dia (Meio Expediente)</strong> ou <strong>Fechado (Não Abre)</strong>.
+              Define como a loja <strong>{selectedUnitLabel}</strong> opera em datas específicas: <strong>Dia Inteiro (Normal)</strong>, <strong>Meio Dia (Meio Expediente)</strong> ou <strong>Fechado (Não Abre)</strong>.
             </div>
 
             <form
@@ -665,7 +668,7 @@ export default function RulesShiftsAndCalendarModule({
 
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              Calendário Operacional de {selectedUnitId} ({unitCalendarDays.length} datas configuradas)
+              Calendário Operacional — {selectedUnitLabel} ({unitCalendarDays.length} datas configuradas)
             </div>
             <table style={ui.table}>
               <thead>
@@ -688,7 +691,7 @@ export default function RulesShiftsAndCalendarModule({
                         {c.calendarDate.split("-").reverse().join("/")}
                       </td>
                       <td style={{ ...ui.td, textAlign: "center", fontSize: 11, fontWeight: 700 }}>
-                        {c.unitId}
+                        {unitsById[c.unitId]?.name || unitsById[c.unitId]?.code || c.unitId}
                       </td>
                       <td style={{ ...ui.td, textAlign: "center", fontSize: 11 }}>{c.dayType}</td>
                       <td style={{ ...ui.td, textAlign: "center" }}>

@@ -32,6 +32,12 @@ export default function EmployeesAndAvailabilityModule({
   const activeReferenceDate = selectedYearMonth
     ? `${selectedYearMonth}-01`
     : new Date().toISOString().slice(0, 10);
+  const unitsById = useMemo(
+    () => Object.fromEntries((db.units || []).map((u) => [u.id, u])),
+    [db.units]
+  );
+  const selectedUnitLabel =
+    unitsById[selectedUnitId]?.name || unitsById[selectedUnitId]?.code || selectedUnitId || "Unidade";
   const [subTab, setSubTab] = useState(
     initialTab === "unavailability" ? "availability" : "employees"
   );
@@ -92,19 +98,22 @@ export default function EmployeesAndAvailabilityModule({
     [db.scheduleRules]
   );
 
-  // Postos vagos disponíveis para alocação
+  // Postos vagos disponíveis para alocação (inclui postos RATEIO compartilhados)
   const vacantPositions = useMemo(() => {
     const occupiedIds = new Set(
       db.allocations
         .filter((a) => !a.endDate || a.endDate >= activeReferenceDate)
         .map((a) => a.workPositionId)
     );
-    return db.workPositions.filter(
-      (p) =>
-        (!selectedUnitId || p.unitId === selectedUnitId) &&
-        !occupiedIds.has(p.id) &&
-        p.status !== "DEACTIVATED"
-    );
+    return db.workPositions.filter((p) => {
+      if (occupiedIds.has(p.id) || p.status === "DEACTIVATED") return false;
+      if (!selectedUnitId || p.unitId === selectedUnitId) return true;
+      if (!p.isSharedRateio) return false;
+      if (Array.isArray(p.authorizedUnitIds) && p.authorizedUnitIds.length > 0) {
+        return p.authorizedUnitIds.includes(selectedUnitId);
+      }
+      return true;
+    });
   }, [db.allocations, db.workPositions, selectedUnitId, activeReferenceDate]);
 
   const vacantPositionsInTargetUnit = useMemo(() => {
@@ -121,6 +130,29 @@ export default function EmployeesAndAvailabilityModule({
     );
   }, [db.allocations, db.workPositions, movTargetUnitId, movStartDate]);
 
+  const rateioPositionEmpIdsForUnit = useMemo(() => {
+    const ids = new Set();
+    const rateioPosIds = new Set(
+      (db.workPositions || [])
+        .filter(
+          (p) =>
+            p.isSharedRateio &&
+            p.status !== "DEACTIVATED" &&
+            (!selectedUnitId ||
+              !Array.isArray(p.authorizedUnitIds) ||
+              p.authorizedUnitIds.length === 0 ||
+              p.authorizedUnitIds.includes(selectedUnitId))
+        )
+        .map((p) => p.id)
+    );
+    for (const a of db.allocations || []) {
+      if (rateioPosIds.has(a.workPositionId) && (!a.endDate || a.endDate >= activeReferenceDate)) {
+        ids.add(a.employeeId);
+      }
+    }
+    return ids;
+  }, [db.workPositions, db.allocations, selectedUnitId, activeReferenceDate]);
+
   // Filtra colaboradores respeitando o Contexto Global de Unidade (Seção 5) + Rateio Compartilhado (Seção 18)
   const filteredEmployees = useMemo(() => {
     return db.employees
@@ -128,6 +160,9 @@ export default function EmployeesAndAvailabilityModule({
         if (showAllUnitsEmployees || !selectedUnitId) return true;
         if (emp.homeUnitId === selectedUnitId) return true;
         if (emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(selectedUnitId)) {
+          return true;
+        }
+        if (rateioPositionEmpIdsForUnit.has(emp.id)) {
           return true;
         }
         const hasAllocInUnit = db.allocations.some(
@@ -575,7 +610,7 @@ export default function EmployeesAndAvailabilityModule({
           {/* Formulário de Admissão / Alocação em Vaga Aberta */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              ➕ Admitir / Vincular Novo Colaborador a um Posto Vago ({selectedUnitId})
+              ➕ Admitir / Vincular Novo Colaborador a um Posto Vago — {selectedUnitLabel}
             </div>
             <form
               onSubmit={handleHireEmployee}
@@ -661,7 +696,7 @@ export default function EmployeesAndAvailabilityModule({
               }}
             >
               <div style={ui.cardTitle}>
-                Quadro Nominal de Colaboradores — {showAllUnitsEmployees ? "Todas as Unidades" : selectedUnitId} ({filteredEmployees.length})
+                Quadro Nominal de Colaboradores — {showAllUnitsEmployees ? "Todas as Unidades" : selectedUnitLabel} ({filteredEmployees.length})
               </div>
               <input
                 type="text"

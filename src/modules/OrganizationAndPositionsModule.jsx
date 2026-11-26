@@ -60,6 +60,14 @@ export default function OrganizationAndPositionsModule({
   const [editingUnitId, setEditingUnitId] = useState(null);
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
+  const [unitLegalName, setUnitLegalName] = useState("");
+  const [unitCnpj, setUnitCnpj] = useState("");
+  const [unitEstablishmentType, setUnitEstablishmentType] = useState("FILIAL");
+  const [unitZipCode, setUnitZipCode] = useState("");
+  const [unitStreet, setUnitStreet] = useState("");
+  const [unitNumber, setUnitNumber] = useState("");
+  const [unitComplement, setUnitComplement] = useState("");
+  const [unitNeighborhood, setUnitNeighborhood] = useState("");
   const [unitCity, setUnitCity] = useState("");
   const [unitState, setUnitState] = useState("");
 
@@ -154,11 +162,16 @@ export default function OrganizationAndPositionsModule({
     }
   }, [sectorsById, genSectorId, sectors]);
 
+  const filteredGenRoles = useMemo(
+    () => (genSectorId ? roles.filter((r) => r.defaultSectorId === genSectorId) : []),
+    [roles, genSectorId]
+  );
+
   useEffect(() => {
-    if (!rolesById[genRoleId]) {
-      setGenRoleId(roles[0]?.id || "");
+    if (!filteredGenRoles.some((r) => r.id === genRoleId)) {
+      setGenRoleId(filteredGenRoles[0]?.id || "");
     }
-  }, [rolesById, genRoleId, roles]);
+  }, [filteredGenRoles, genRoleId]);
 
   useEffect(() => {
     if (!shiftsById[genShiftId]) {
@@ -199,9 +212,19 @@ export default function OrganizationAndPositionsModule({
     return map;
   }, [db.allocations, db.employees, activeReferenceDate]);
 
+  const isPositionVisibleInUnit = (pos, targetUnitId) => {
+    if (!targetUnitId) return true;
+    if (pos.unitId === targetUnitId) return true;
+    if (!pos.isSharedRateio) return false;
+    if (Array.isArray(pos.authorizedUnitIds) && pos.authorizedUnitIds.length > 0) {
+      return pos.authorizedUnitIds.includes(targetUnitId);
+    }
+    return true;
+  };
+
   const filteredPositions = useMemo(() => {
     return db.workPositions
-      .filter((p) => !selectedUnitId || p.unitId === selectedUnitId)
+      .filter((p) => isPositionVisibleInUnit(p, selectedUnitId))
       .filter((p) => !filterSectorId || p.sectorId === filterSectorId)
       .filter((p) => !filterStatus || p.status === filterStatus)
       .filter((p) => {
@@ -292,6 +315,14 @@ export default function OrganizationAndPositionsModule({
               ...draft.units[idx],
               code: cleanCode,
               name: cleanName,
+              legalName: unitLegalName.trim(),
+              cnpj: unitCnpj.trim(),
+              establishmentType: unitEstablishmentType || "FILIAL",
+              zipCode: unitZipCode.trim(),
+              street: unitStreet.trim(),
+              number: unitNumber.trim(),
+              complement: unitComplement.trim(),
+              neighborhood: unitNeighborhood.trim(),
               city: unitCity.trim(),
               state: unitState.trim().toUpperCase(),
             };
@@ -302,6 +333,14 @@ export default function OrganizationAndPositionsModule({
             companyId: draft.companies[0]?.id || "comp_default",
             code: cleanCode,
             name: cleanName,
+            legalName: unitLegalName.trim(),
+            cnpj: unitCnpj.trim(),
+            establishmentType: unitEstablishmentType || "FILIAL",
+            zipCode: unitZipCode.trim(),
+            street: unitStreet.trim(),
+            number: unitNumber.trim(),
+            complement: unitComplement.trim(),
+            neighborhood: unitNeighborhood.trim(),
             city: unitCity.trim(),
             state: unitState.trim().toUpperCase(),
             active: true,
@@ -315,6 +354,14 @@ export default function OrganizationAndPositionsModule({
     setEditingUnitId(null);
     setUnitCode("");
     setUnitName("");
+    setUnitLegalName("");
+    setUnitCnpj("");
+    setUnitEstablishmentType("FILIAL");
+    setUnitZipCode("");
+    setUnitStreet("");
+    setUnitNumber("");
+    setUnitComplement("");
+    setUnitNeighborhood("");
     setUnitCity("");
     setUnitState("");
   };
@@ -584,6 +631,13 @@ export default function OrganizationAndPositionsModule({
       });
       return;
     }
+    if (role.defaultSectorId !== sector.id) {
+      setBatchFeedback({
+        tone: "danger",
+        text: `A função "${role.name}" não pertence ao setor "${sector.name}". Selecione uma função vinculada ao setor.`,
+      });
+      return;
+    }
     const shift = shiftsById[genShiftId];
     if (!shift) {
       setBatchFeedback({
@@ -651,6 +705,14 @@ export default function OrganizationAndPositionsModule({
   const handleSaveEditedPosition = (e) => {
     e.preventDefault();
     if (!editingPos) return;
+    const editedRole = rolesById[editingPos.roleId];
+    if (!editedRole || editedRole.defaultSectorId !== editingPos.sectorId) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione uma função compatível com o setor do posto antes de salvar.",
+      });
+      return;
+    }
 
     onMutateDb({
       permission: "CREATE_POSITIONS",
@@ -883,32 +945,108 @@ export default function OrganizationAndPositionsModule({
 
       {activeSection === "units" && (
         <div style={ui.card}>
-          <div style={ui.cardTitle}>Unidades operacionais (Filiais)</div>
+          <div style={ui.cardTitle}>Unidades operacionais (Matriz e Filiais)</div>
           <form
             onSubmit={handleSaveUnit}
             style={{
               display: "grid",
-              gridTemplateColumns: "0.7fr 1.3fr 1fr 0.45fr auto",
+              gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
               gap: 8,
               alignItems: "end",
               marginBottom: 14,
             }}
           >
             <div>
-              <label style={ui.label}>Código</label>
+              <label style={ui.label}>Código *</label>
               <input
                 placeholder="Ex: LJ04"
                 value={unitCode}
                 onChange={(e) => setUnitCode(e.target.value)}
                 style={ui.input}
+                required
               />
             </div>
             <div>
-              <label style={ui.label}>Nome da Unidade</label>
+              <label style={ui.label}>Nome da Unidade *</label>
               <input
                 placeholder="Ex: LOJA 04"
                 value={unitName}
                 onChange={(e) => setUnitName(e.target.value)}
+                style={ui.input}
+                required
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Tipo de Estabelecimento</label>
+              <select
+                value={unitEstablishmentType}
+                onChange={(e) => setUnitEstablishmentType(e.target.value)}
+                style={ui.select}
+              >
+                <option value="FILIAL">Filial</option>
+                <option value="MATRIZ">Matriz</option>
+              </select>
+            </div>
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={ui.label}>Razão Social</label>
+              <input
+                placeholder="Razão social do estabelecimento"
+                value={unitLegalName}
+                onChange={(e) => setUnitLegalName(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>CNPJ</label>
+              <input
+                placeholder="00.000.000/0000-00"
+                value={unitCnpj}
+                onChange={(e) => setUnitCnpj(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>CEP</label>
+              <input
+                placeholder="00000-000"
+                value={unitZipCode}
+                onChange={(e) => setUnitZipCode(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div style={{ gridColumn: "span 2" }}>
+              <label style={ui.label}>Logradouro</label>
+              <input
+                placeholder="Rua, Avenida, Praça..."
+                value={unitStreet}
+                onChange={(e) => setUnitStreet(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Número</label>
+              <input
+                placeholder="Ex: 120"
+                value={unitNumber}
+                onChange={(e) => setUnitNumber(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Complemento</label>
+              <input
+                placeholder="Sala, Bloco..."
+                value={unitComplement}
+                onChange={(e) => setUnitComplement(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Bairro</label>
+              <input
+                placeholder="Bairro"
+                value={unitNeighborhood}
+                onChange={(e) => setUnitNeighborhood(e.target.value)}
                 style={ui.input}
               />
             </div>
@@ -931,9 +1069,34 @@ export default function OrganizationAndPositionsModule({
                 style={ui.input}
               />
             </div>
-            <button type="submit" style={ui.btnPrimary}>
-              {editingUnitId ? "Salvar unidade" : "Adicionar unidade"}
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button type="submit" style={ui.btnPrimary}>
+                {editingUnitId ? "Salvar unidade" : "Adicionar unidade"}
+              </button>
+              {editingUnitId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingUnitId(null);
+                    setUnitCode("");
+                    setUnitName("");
+                    setUnitLegalName("");
+                    setUnitCnpj("");
+                    setUnitEstablishmentType("FILIAL");
+                    setUnitZipCode("");
+                    setUnitStreet("");
+                    setUnitNumber("");
+                    setUnitComplement("");
+                    setUnitNeighborhood("");
+                    setUnitCity("");
+                    setUnitState("");
+                  }}
+                  style={ui.btnSmall}
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
           </form>
 
           <table style={ui.table}>
@@ -941,7 +1104,8 @@ export default function OrganizationAndPositionsModule({
               <tr>
                 <th style={ui.th}>Código</th>
                 <th style={ui.th}>Unidade</th>
-                <th style={ui.th}>Cidade / UF</th>
+                <th style={ui.th}>Dados Fiscais (Razão Social / CNPJ)</th>
+                <th style={ui.th}>Endereço / Cidade · UF</th>
                 <th style={{ ...ui.th, textAlign: "center" }}>Postos</th>
                 <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
               </tr>
@@ -949,9 +1113,17 @@ export default function OrganizationAndPositionsModule({
             <tbody>
               {db.units.map((u) => {
                 const posCount = db.workPositions.filter((p) => p.unitId === u.id).length;
+                const fiscalPending = !String(u.cnpj || "").trim() || !String(u.legalName || "").trim();
+                const addrStreet = [u.street, u.number, u.complement].filter(Boolean).join(", ");
+                const addrDistrict = [u.neighborhood, u.zipCode ? `CEP ${u.zipCode}` : ""].filter(Boolean).join(" · ");
                 return (
                   <tr key={u.id}>
-                    <td style={{ ...ui.td, fontWeight: 700 }}>{u.code}</td>
+                    <td style={{ ...ui.td, fontWeight: 700 }}>
+                      <div>{u.code}</div>
+                      <div style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>
+                        {u.establishmentType === "MATRIZ" ? "MATRIZ" : "FILIAL"}
+                      </div>
+                    </td>
                     <td style={{ ...ui.td, fontWeight: 600 }}>
                       {u.name}{" "}
                       {u.id === selectedUnitId && (
@@ -961,7 +1133,35 @@ export default function OrganizationAndPositionsModule({
                       )}
                     </td>
                     <td style={ui.td}>
-                      {u.city || "—"} {u.state ? `· ${u.state}` : ""}
+                      <div style={{ fontSize: 12, fontWeight: 600 }}>
+                        {u.legalName || <span style={{ color: "#b45309" }}>Razão social pendente</span>}
+                      </div>
+                      <div style={{ fontSize: 11, color: u.cnpj ? "#475569" : "#b45309" }}>
+                        {u.cnpj ? `CNPJ ${u.cnpj}` : "CNPJ pendente"}
+                      </div>
+                      {fiscalPending && (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            marginTop: 2,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: "#b45309",
+                            background: "#fef3c7",
+                            padding: "1px 6px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          Completar cadastro fiscal
+                        </span>
+                      )}
+                    </td>
+                    <td style={ui.td}>
+                      {addrStreet && <div style={{ fontSize: 11.5 }}>{addrStreet}</div>}
+                      {addrDistrict && <div style={{ fontSize: 11, color: "#64748b" }}>{addrDistrict}</div>}
+                      <div>
+                        {u.city || "—"} {u.state ? `· ${u.state}` : ""}
+                      </div>
                     </td>
                     <td style={{ ...ui.td, textAlign: "center" }}>{posCount}</td>
                     <td style={{ ...ui.td, textAlign: "right" }}>
@@ -970,8 +1170,16 @@ export default function OrganizationAndPositionsModule({
                           type="button"
                           onClick={() => {
                             setEditingUnitId(u.id);
-                            setUnitCode(u.code);
-                            setUnitName(u.name);
+                            setUnitCode(u.code || "");
+                            setUnitName(u.name || "");
+                            setUnitLegalName(u.legalName || "");
+                            setUnitCnpj(u.cnpj || "");
+                            setUnitEstablishmentType(u.establishmentType || "FILIAL");
+                            setUnitZipCode(u.zipCode || "");
+                            setUnitStreet(u.street || "");
+                            setUnitNumber(u.number || "");
+                            setUnitComplement(u.complement || "");
+                            setUnitNeighborhood(u.neighborhood || "");
                             setUnitCity(u.city || "");
                             setUnitState(u.state || "");
                           }}
@@ -1001,7 +1209,7 @@ export default function OrganizationAndPositionsModule({
       {activeSection === "sectors" && (
         <div style={ui.card}>
           <div style={ui.cardTitle}>
-            Setores operacionais e cobertura mínima ({selectedUnitLabel})
+            Setores operacionais e cobertura mínima — {selectedUnitLabel}
           </div>
           <form
             onSubmit={handleSaveSector}
@@ -1066,7 +1274,7 @@ export default function OrganizationAndPositionsModule({
                 <th style={ui.th}>Setor</th>
                 <th style={{ ...ui.th, textAlign: "center" }}>Mín. Dia Útil</th>
                 <th style={{ ...ui.th, textAlign: "center" }}>Mín. Domingo</th>
-                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitLabel})</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos — {selectedUnitLabel}</th>
                 <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
@@ -1393,7 +1601,7 @@ export default function OrganizationAndPositionsModule({
                 <th style={ui.th}>Função / Cargo</th>
                 <th style={ui.th}>Categoria</th>
                 <th style={ui.th}>Setor Padrão</th>
-                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitLabel})</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos — {selectedUnitLabel}</th>
                 <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
@@ -1533,6 +1741,16 @@ export default function OrganizationAndPositionsModule({
               </div>
             )}
 
+            {genSectorId && filteredGenRoles.length === 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <Alert tone="warning" title="Sem funções disponíveis para este setor">
+                  Nenhuma função está vinculada ao setor{" "}
+                  <strong>{sectorsById[genSectorId]?.name || ""}</strong>. Cadastre ou vincule uma
+                  função a este setor antes de criar postos de trabalho.
+                </Alert>
+              </div>
+            )}
+
             <form
               onSubmit={handleCreateBatchPositions}
               style={{
@@ -1547,7 +1765,12 @@ export default function OrganizationAndPositionsModule({
                 <select
                   value={sectorsById[genSectorId] ? genSectorId : ""}
                   onChange={(e) => {
-                    setGenSectorId(e.target.value);
+                    const nextSecId = e.target.value;
+                    setGenSectorId(nextSecId);
+                    const nextRoles = roles.filter((r) => r.defaultSectorId === nextSecId);
+                    if (!nextRoles.some((r) => r.id === genRoleId)) {
+                      setGenRoleId(nextRoles[0]?.id || "");
+                    }
                     if (batchFeedback) setBatchFeedback(null);
                   }}
                   style={ui.select}
@@ -1564,15 +1787,22 @@ export default function OrganizationAndPositionsModule({
               <div>
                 <label style={ui.label}>Função</label>
                 <select
-                  value={rolesById[genRoleId] ? genRoleId : ""}
+                  value={filteredGenRoles.some((r) => r.id === genRoleId) ? genRoleId : ""}
                   onChange={(e) => {
                     setGenRoleId(e.target.value);
                     if (batchFeedback) setBatchFeedback(null);
                   }}
+                  disabled={filteredGenRoles.length === 0}
                   style={ui.select}
                 >
-                  {roles.length === 0 && <option value="">Nenhuma função cadastrada</option>}
-                  {roles.map((r) => (
+                  {filteredGenRoles.length === 0 && (
+                    <option value="">
+                      {genSectorId
+                        ? "Nenhuma função vinculada a este setor"
+                        : "Nenhuma função cadastrada"}
+                    </option>
+                  )}
+                  {filteredGenRoles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
                     </option>
@@ -1666,7 +1896,14 @@ export default function OrganizationAndPositionsModule({
                 </label>
               </div>
 
-              <button type="submit" style={ui.btnPrimary}>
+              <button
+                type="submit"
+                disabled={filteredGenRoles.length === 0 || !genRoleId}
+                style={{
+                  ...ui.btnPrimary,
+                  opacity: filteredGenRoles.length === 0 || !genRoleId ? 0.55 : 1,
+                }}
+              >
                 Gerar {genQuantity} Posto(s)
               </button>
             </form>
@@ -1869,7 +2106,16 @@ export default function OrganizationAndPositionsModule({
                 <label style={ui.label}>Setor</label>
                 <select
                   value={editingPos.sectorId}
-                  onChange={(e) => setEditingPos({ ...editingPos, sectorId: e.target.value })}
+                  onChange={(e) => {
+                    const nextSecId = e.target.value;
+                    const sectorRoles = db.roles.filter((r) => r.defaultSectorId === nextSecId);
+                    const keepRole = sectorRoles.some((r) => r.id === editingPos.roleId);
+                    setEditingPos({
+                      ...editingPos,
+                      sectorId: nextSecId,
+                      roleId: keepRole ? editingPos.roleId : sectorRoles[0]?.id || "",
+                    });
+                  }}
                   style={ui.select}
                 >
                   {db.sectors.map((s) => (
@@ -1881,17 +2127,32 @@ export default function OrganizationAndPositionsModule({
               </div>
               <div>
                 <label style={ui.label}>Função Associada</label>
-                <select
-                  value={editingPos.roleId}
-                  onChange={(e) => setEditingPos({ ...editingPos, roleId: e.target.value })}
-                  style={ui.select}
-                >
-                  {db.roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
+                {(() => {
+                  const editSectorRoles = db.roles.filter(
+                    (r) => r.defaultSectorId === editingPos.sectorId
+                  );
+                  return (
+                    <select
+                      value={
+                        editSectorRoles.some((r) => r.id === editingPos.roleId)
+                          ? editingPos.roleId
+                          : ""
+                      }
+                      onChange={(e) => setEditingPos({ ...editingPos, roleId: e.target.value })}
+                      disabled={editSectorRoles.length === 0}
+                      style={ui.select}
+                    >
+                      {editSectorRoles.length === 0 && (
+                        <option value="">Nenhuma função vinculada a este setor</option>
+                      )}
+                      {editSectorRoles.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
               </div>
               <div>
                 <label style={ui.label}>Jornada Contratual Padrão</label>

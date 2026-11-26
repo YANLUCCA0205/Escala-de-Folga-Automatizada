@@ -250,8 +250,8 @@ function renderSchedulePageContentStream(doc, page) {
     sizePt: 9.2,
     colorHex: "#0F172A",
   });
-  const unitLine = `${doc.companyLegalName}  ·  Unidade: ${doc.unitName}${
-    doc.unitCity ? ` (${doc.unitCity})` : ""
+  const unitLine = `${doc.unitFiscalLabel || doc.companyLegalName}  ·  Unidade: ${doc.unitName}${
+    doc.unitCity ? ` (${doc.unitCity}${doc.unitState ? `/${doc.unitState}` : ""})` : ""
   }`;
   drawText(cmds, pageH, unitLine, left + 46.5, top + 9.2, {
     font: "F2",

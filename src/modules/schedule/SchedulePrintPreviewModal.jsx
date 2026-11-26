@@ -65,8 +65,8 @@ export function SchedulePrintSheet({ doc, page, idPrefix = "preview" }) {
                   marginTop: "0.5mm",
                 }}
               >
-                {doc.companyLegalName} · Unidade: {doc.unitName}
-                {doc.unitCity ? ` (${doc.unitCity})` : ""}
+                {doc.unitFiscalLabel || doc.companyLegalName} · Unidade: {doc.unitName}
+                {doc.unitCity ? ` (${doc.unitCity}${doc.unitState ? `/${doc.unitState}` : ""})` : ""}
               </div>
               <div
                 style={{

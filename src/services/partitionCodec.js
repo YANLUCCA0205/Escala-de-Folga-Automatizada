@@ -18,6 +18,17 @@ export function partitionKey(scope, kind, period = "") {
   return `${scope}|${kind}|${period || ""}`;
 }
 
+function isPositionVisibleInUnit(pos, unitId, fallbackUnitId = "") {
+  if (!pos) return false;
+  if (!unitId) return true;
+  if ((pos.unitId || fallbackUnitId) === unitId) return true;
+  if (!pos.isSharedRateio) return false;
+  if (Array.isArray(pos.authorizedUnitIds) && pos.authorizedUnitIds.length > 0) {
+    return pos.authorizedUnitIds.includes(unitId);
+  }
+  return true;
+}
+
 function resolveEmployeeUnits(emp, allocationsByEmpId, fallbackUnitId) {
   const units = new Set();
   if (emp.homeUnitId) units.add(emp.homeUnitId);
@@ -108,7 +119,9 @@ export function splitDatabaseIntoPartitions(db) {
 
   // 3. Partições cadastrais por unidade
   for (const unitId of sortedUnits) {
-    const unitPositions = (db.workPositions || []).filter((p) => (p.unitId || fallbackUnitId) === unitId);
+    const unitPositions = (db.workPositions || []).filter((p) =>
+      isPositionVisibleInUnit(p, unitId, fallbackUnitId)
+    );
     const unitSectors = (db.unitSectors || []).filter((us) => (us.unitId || fallbackUnitId) === unitId);
 
     map.set(partitionKey(unitId, "positions", ""), {

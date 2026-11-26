@@ -55,6 +55,10 @@ export default function DashboardAndBiModule({
     () => Object.fromEntries(db.workShifts.map((s) => [s.id, s])),
     [db.workShifts]
   );
+  const selectedUnitLabel = useMemo(() => {
+    const u = (db.units || []).find((item) => item.id === selectedUnitId);
+    return u?.name || u?.code || selectedUnitId || "Unidade";
+  }, [db.units, selectedUnitId]);
 
   const monthEntries = useMemo(
     () => db.dailyEntriesByMonth[selectedYearMonth] || [],
@@ -803,7 +807,7 @@ export default function DashboardAndBiModule({
             </tbody>
             <tfoot>
               <tr style={{ background: "#f1f5f9", fontWeight: 800, color: "#0f172a" }}>
-                <td style={ui.td}>TOTAL CONSOLIDADO ({selectedUnitId})</td>
+                <td style={ui.td}>TOTAL CONSOLIDADO — {selectedUnitLabel}</td>
                 <td style={{ ...ui.td, textAlign: "center" }}>{totals.plannedOwnPositions}</td>
                 <td style={{ ...ui.td, textAlign: "center" }}>
                   {totals.filledRateioPositions}/{totals.plannedRateioPositions}
