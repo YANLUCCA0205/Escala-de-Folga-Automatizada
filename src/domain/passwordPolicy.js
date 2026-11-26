@@ -117,7 +117,7 @@ function isCommonPassword(pwd) {
  */
 export function evaluatePassword(password, context = {}) {
   const pwd = String(password || "");
-  const hasMinLen = pwd.length >= 12;
+  const hasMinLen = pwd.length >= 8;
   const hasMaxLen = pwd.length <= 128;
   const hasUpper = /[A-ZÀ-Ý]/.test(pwd);
   const hasLower = /[a-zà-ÿ]/.test(pwd);
