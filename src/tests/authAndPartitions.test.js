@@ -633,10 +633,65 @@ test("SEC-10: Fluxo de login e logout na Vercel/Supabase funciona com thenable P
   assert.equal(loginRes.profile?.role, "MASTER");
 
   // Testa também o encerramento de sessão com PostgrestFilterBuilder sem .catch()
-  const { signOutSecurely } = await import("../services/authService.js");
+  const { signOutSecurely, invokeAdminUsers } = await import("../services/authService.js");
   await assert.doesNotReject(
     () => signOutSecurely(prodLikeSupabaseClient),
     "signOutSecurely encerra a sessão sem lançar TypeError: client.rpc(...).catch is not a function"
   );
   assert.equal(sessionStored, null, "sessão revogada após signOutSecurely");
+
+  // SEC-11: Quando a Edge Function admin-users não está implantada ("Failed to send a request to the Edge Function"),
+  // invokeAdminUsers utiliza o fallback seguro via auth.signUp efêmero + RPC master_manage_user
+  let capturedRpcPayload = null;
+  const edgeUnavailableClient = {
+    functions: {
+      async invoke() {
+        const err = new Error("Failed to send a request to the Edge Function");
+        err.name = "FunctionsFetchError";
+        return { data: null, error: err };
+      },
+    },
+    auth: {
+      async signUp({ email: em }) {
+        return {
+          data: { user: { id: "new-op-uuid", email: em } },
+          error: null,
+        };
+      },
+    },
+    async rpc(fn, args) {
+      assert.equal(fn, "master_manage_user");
+      capturedRpcPayload = args.p_payload;
+      return {
+        data: {
+          ok: true,
+          profile: {
+            id: args.p_payload.userId,
+            email: args.p_payload.email,
+            role: args.p_payload.role,
+            status: "PENDING",
+          },
+        },
+        error: null,
+      };
+    },
+  };
+
+  const fallbackRes = await invokeAdminUsers(
+    {
+      action: "invite",
+      email: "novo.admin@exemplo.invalid",
+      fullName: "Novo Admin",
+      role: "ADMIN",
+      authorizedUnits: ["LOJA_01", "LOJA_02", "LOJA_03"],
+      deliveryMode: "temp_password",
+    },
+    edgeUnavailableClient
+  );
+
+  assert.equal(fallbackRes.ok, true);
+  assert.equal(fallbackRes.oneTimeTempPassword.length, 20);
+  assert.equal(capturedRpcPayload.action, "create_profile");
+  assert.equal(capturedRpcPayload.userId, "new-op-uuid");
+  assert.equal(capturedRpcPayload.mustChangePassword, true);
 });

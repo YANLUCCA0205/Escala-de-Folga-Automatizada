@@ -51,6 +51,7 @@ const ALLOWED_PUBLIC_RPCS = new Set([
   "complete_activation",
   "complete_password_change",
   "admin_list_users",
+  "master_manage_user",
   "record_auth_event",
   "erp_save_batch",
   "erp_set_setting",
@@ -128,6 +129,7 @@ export async function createErpBackend({
     const migrations = [
       ["20261201000100_security_foundation", "supabase/migrations/20261201000100_security_foundation.sql"],
       ["20261201000200_partitioned_storage", "supabase/migrations/20261201000200_partitioned_storage.sql"],
+      ["20261201000400_master_direct_user_admin", "supabase/migrations/20261201000400_master_direct_user_admin.sql"],
     ];
 
     for (const [version, relFile] of migrations) {
@@ -1002,6 +1004,12 @@ export async function createErpBackend({
           if (fnName === "record_auth_event") {
             await db.query("select public.record_auth_event($1)", [args.p_event]);
             return null;
+          }
+          if (fnName === "master_manage_user") {
+            const r = await db.query("select public.master_manage_user($1::jsonb) as res", [
+              JSON.stringify(args.p_payload || {}),
+            ]);
+            return r.rows[0]?.res;
           }
           if (fnName === "erp_save_batch") {
             const r = await db.query("select public.erp_save_batch($1::jsonb, $2::jsonb) as res", [

@@ -571,13 +571,179 @@ export async function listManagedUsers(client = getSupabaseClient()) {
   return data || [];
 }
 
+/** Gera senha temporária forte por CSPRNG no navegador (20 caracteres, 4 classes obrigatórias). */
+function generateBrowserCryptographicTempPassword(cryptoImpl = globalThis.crypto) {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%&*+-=?";
+  const all = upper + lower + digits + symbols;
+
+  const bytes = new Uint32Array(24);
+  cryptoImpl.getRandomValues(bytes);
+
+  const chars = [
+    upper[bytes[0] % upper.length],
+    lower[bytes[1] % lower.length],
+    digits[bytes[2] % digits.length],
+    symbols[bytes[3] % symbols.length],
+  ];
+  for (let i = 4; i < 20; i++) {
+    chars.push(all[bytes[i] % all.length]);
+  }
+  for (let i = chars.length - 1; i > 0; i--) {
+    const rand = bytes[i % bytes.length] ^ (bytes[(i + 7) % bytes.length] << 3);
+    const j = Math.abs(rand) % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}
+
+/**
+ * Fallback seguro para quando a Edge Function `admin-users` não estiver implantada no projeto Supabase:
+ *   1. Para `invite` (provisionamento de novo operador), cria a identidade no GoTrue via cliente
+ *      efêmero (`persistSession: false`) com senha temporária CSPRNG de 20 caracteres (sem afetar
+ *      a sessão do MASTER) e registra o perfil em `public.erp_profiles` via RPC `public.master_manage_user`.
+ *   2. Para `update_profile`, `set_status`, `revoke_sessions` e `reset_credentials`, executa diretamente
+ *      a RPC `public.master_manage_user` autenticada pelo JWT do MASTER ativo.
+ */
+async function invokeAdminUsersViaRpcFallback(payload, client) {
+  const action = String(payload?.action || "");
+
+  if (action === "invite") {
+    const email = String(payload.email || "").trim().toLowerCase();
+    const fullName = String(payload.fullName || "").trim();
+    const role = String(payload.role || "OPERATOR").toUpperCase();
+    const authorizedUnits = Array.isArray(payload.authorizedUnits)
+      ? payload.authorizedUnits.map((u) => String(u).trim()).filter(Boolean)
+      : [];
+    const extraPermissions = Array.isArray(payload.extraPermissions) ? payload.extraPermissions : [];
+    const deniedPermissions = Array.isArray(payload.deniedPermissions) ? payload.deniedPermissions : [];
+
+    const oneTimeTempPassword = generateBrowserCryptographicTempPassword();
+
+    // Cria cliente efêmero isolado (sem persistir sessão) para não substituir o token do MASTER
+    const ephemeralClient = isSupabaseConfigured()
+      ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+            storageKey: `${AUTH_STORAGE_KEY}_ephemeral_provision`,
+            storage: {
+              getItem() { return null; },
+              setItem() {},
+              removeItem() {},
+            },
+          },
+        })
+      : client;
+
+    let createdUserId = null;
+    if (ephemeralClient?.auth?.signUp) {
+      const redirectTo =
+        typeof window !== "undefined" ? `${window.location.origin}/?type=invite` : undefined;
+      const { data: signUpData, error: signUpErr } = await ephemeralClient.auth.signUp({
+        email,
+        password: oneTimeTempPassword,
+        options: {
+          data: { full_name: fullName },
+          emailRedirectTo: redirectTo,
+        },
+      });
+      if (signUpErr) {
+        throw new Error(signUpErr.message || "Não foi possível criar a identidade no Supabase Auth.");
+      }
+      createdUserId = signUpData?.user?.id || null;
+    }
+
+    if (!createdUserId) {
+      throw new Error("Não foi possível obter o identificador do novo usuário no Supabase Auth.");
+    }
+
+    const { data: rpcRes, error: rpcErr } = await client.rpc("master_manage_user", {
+      p_payload: {
+        action: "create_profile",
+        userId: createdUserId,
+        email,
+        fullName,
+        role,
+        authorizedUnits: role === "MASTER" ? [] : authorizedUnits,
+        extraPermissions,
+        deniedPermissions,
+        mustChangePassword: true,
+      },
+    });
+
+    if (rpcErr) {
+      const msg = String(rpcErr.message || "");
+      if (msg.includes("master_manage_user")) {
+        throw new Error(
+          "A função administrativa 'public.master_manage_user' ainda não foi aplicada no Supabase. Execute o arquivo 'supabase/migrations/20261201000400_master_direct_user_admin.sql' no SQL Editor do Supabase."
+        );
+      }
+      throw new Error(msg || "Falha ao registrar o perfil do operador.");
+    }
+    if (!rpcRes?.ok) {
+      throw new Error(rpcRes?.message || rpcRes?.error || "Operação administrativa recusada.");
+    }
+
+    return {
+      ok: true,
+      profile: rpcRes.profile,
+      deliveryMode: "temp_password",
+      oneTimeInviteLink: null,
+      oneTimeTempPassword,
+    };
+  }
+
+  // Demais ações administrativas (update_profile, set_status, revoke_sessions, reset_credentials)
+  if (action === "reset_credentials") {
+    const userId = String(payload.userId || "");
+    const { data: usersList } = await client.rpc("admin_list_users");
+    const targetUser = (usersList || []).find((u) => String(u.id) === userId);
+    if (targetUser?.email) {
+      await requestPasswordRecovery(targetUser.email, client);
+    }
+  }
+
+  const { data: rpcRes, error: rpcErr } = await client.rpc("master_manage_user", {
+    p_payload: payload,
+  });
+
+  if (rpcErr) {
+    const msg = String(rpcErr.message || "");
+    if (msg.includes("master_manage_user")) {
+      throw new Error(
+        "A função administrativa 'public.master_manage_user' ainda não foi aplicada no Supabase. Execute o arquivo 'supabase/migrations/20261201000400_master_direct_user_admin.sql' no SQL Editor do Supabase."
+      );
+    }
+    throw new Error(msg || "Falha ao executar operação administrativa via RPC.");
+  }
+  if (!rpcRes?.ok) {
+    throw new Error(rpcRes?.message || rpcRes?.error || "Operação administrativa recusada.");
+  }
+
+  return rpcRes;
+}
+
 export async function invokeAdminUsers(payload, client = getSupabaseClient()) {
   if (!client) throw new Error("Serviço indisponível.");
   const { data, error } = await client.functions.invoke("admin-users", {
     body: payload,
   });
   if (error) {
-    throw new Error(error.message || "Falha ao executar operação administrativa.");
+    const errMsg = String(error.message || error || "");
+    const isEdgeFnUnavailable =
+      error.name === "FunctionsFetchError" ||
+      error.name === "FunctionsRelayError" ||
+      errMsg.includes("Failed to send a request to the Edge Function") ||
+      errMsg.includes("Relay Error");
+
+    if (isEdgeFnUnavailable && typeof client.rpc === "function") {
+      return await invokeAdminUsersViaRpcFallback(payload, client);
+    }
+    throw new Error(errMsg || "Falha ao executar operação administrativa.");
   }
   if (!data?.ok) {
     throw new Error(data?.message || data?.error || "Operação administrativa recusada.");
