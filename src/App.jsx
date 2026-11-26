@@ -436,11 +436,16 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    await signOutSecurely(supabaseClient);
-    setDb(null);
-    setPreviewRole(null);
-    setAuthViewMode("login");
-    setAuthState({ gate: "unauthenticated", profile: null, blockVariant: null });
+    try {
+      await signOutSecurely(supabaseClient);
+    } finally {
+      setDb(null);
+      partitionsRef.current = new Map();
+      revisionsRef.current = new Map();
+      setPreviewRole(null);
+      setAuthViewMode("login");
+      setAuthState({ gate: "unauthenticated", profile: null, blockVariant: null });
+    }
   };
 
   // ---------------------------------------------------------------------------

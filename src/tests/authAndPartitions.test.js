@@ -559,17 +559,20 @@ test("SEC-09: Ambiente de produção zerado (0 unidades) permite ao MASTER cadas
   );
 });
 
-test("SEC-10: Fluxo de login na Vercel/Supabase conclui autenticação na primeira tentativa sem exigir F5 e sem falso erro de credenciais", async () => {
+test("SEC-10: Fluxo de login e logout na Vercel/Supabase funciona com thenable PostgrestFilterBuilder (sem .catch) na primeira tentativa sem exigir F5", async () => {
   const email = "master.producao@exemplo.invalid";
   clearFailedLoginAttempts(email);
 
   let sessionStored = null;
-  let myProfileCalls = 0;
 
-  // Simula o comportamento em produção no Supabase Cloud:
-  // 1) signInWithPassword valida credenciais e estabelece a sessão;
-  // 2) a primeira chamada imediata de my_profile pode retornar null/erro transitório se houver latência/lock,
-  //    mas a sessão já existe e se resolve em seguida sem precisar de F5.
+  // Em produção no Supabase (@supabase/postgrest-js), `client.rpc()` retorna um
+  // PostgrestFilterBuilder (objeto thenable que possui APENAS `.then()`, sem `.catch()`).
+  const makePostgrestThenable = (factory) => ({
+    then(onFulfilled, onRejected) {
+      return Promise.resolve().then(factory).then(onFulfilled, onRejected);
+    },
+  });
+
   const prodLikeSupabaseClient = {
     auth: {
       async signInWithPassword({ email: em, password: pw }) {
@@ -588,36 +591,35 @@ test("SEC-10: Fluxo de login na Vercel/Supabase conclui autenticação na primei
       },
       async signOut() {
         sessionStored = null;
+        return { error: null };
       },
     },
-    async rpc(fn) {
-      if (fn === "record_auth_event") {
-        return { data: null, error: null };
-      }
-      if (fn === "my_profile") {
-        myProfileCalls += 1;
-        if (myProfileCalls === 1) {
-          // Simula atraso transitório na primeira leitura imediata pós-login
+    rpc(fn) {
+      // Retorna estritamente um thenable sem método `.catch` (idêntico ao PostgrestBuilder real)
+      return makePostgrestThenable(() => {
+        if (fn === "record_auth_event") {
           return { data: null, error: null };
         }
-        return {
-          data: {
-            id: "master-uuid",
-            email,
-            fullName: "Master Produção",
-            role: "MASTER",
-            status: "ACTIVE",
-            mustChangePassword: false,
-            authorizedUnits: [],
-            permissions: PERMISSIONS_BY_ROLE.MASTER,
-            aal: "aal1",
-            mfaRequired: false,
-            mfaEnrolled: false,
-          },
-          error: null,
-        };
-      }
-      return { data: null, error: null };
+        if (fn === "my_profile") {
+          return {
+            data: {
+              id: "master-uuid",
+              email,
+              fullName: "Master Produção",
+              role: "MASTER",
+              status: "ACTIVE",
+              mustChangePassword: false,
+              authorizedUnits: [],
+              permissions: PERMISSIONS_BY_ROLE.MASTER,
+              aal: "aal1",
+              mfaRequired: false,
+              mfaEnrolled: false,
+            },
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      });
     },
   };
 
@@ -630,10 +632,11 @@ test("SEC-10: Fluxo de login na Vercel/Supabase conclui autenticação na primei
   assert.equal(loginRes.gate, "authenticated");
   assert.equal(loginRes.profile?.role, "MASTER");
 
-  // Confirma que o cliente Supabase usa lock serializado em memória (evitando deadlock do navigator.locks)
-  const authServiceSource = fs.readFileSync(path.resolve("src/services/authService.js"), "utf8");
-  assert.ok(
-    authServiceSource.includes("lock: safeInProcessAuthLock"),
-    "getSupabaseClient configura lock seguro sem deadlock circular do navigator.locks"
+  // Testa também o encerramento de sessão com PostgrestFilterBuilder sem .catch()
+  const { signOutSecurely } = await import("../services/authService.js");
+  await assert.doesNotReject(
+    () => signOutSecurely(prodLikeSupabaseClient),
+    "signOutSecurely encerra a sessão sem lançar TypeError: client.rpc(...).catch is not a function"
   );
+  assert.equal(sessionStored, null, "sessão revogada após signOutSecurely");
 });

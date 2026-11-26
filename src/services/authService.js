@@ -313,9 +313,14 @@ export async function signInOperator({ email, password }, client = getSupabaseCl
     clearFailedLoginAttempts(cleanEmail);
 
     // A partir deste ponto a credencial já foi validada e a sessão foi emitida pelo Supabase Auth.
-    // Qualquer eventual oscilação na telemetria de auditoria ou na leitura do perfil não deve
-    // ser classificada como erro de e-mail/senha inválidos nem incrementar o rate limit.
-    await client.rpc("record_auth_event", { p_event: "LOGIN" }).catch(() => {});
+    // NOTA CRÍTICA: no @supabase/postgrest-js, `client.rpc()` retorna um `PostgrestFilterBuilder`
+    // (thenable que possui `.then()`, mas NÃO possui `.catch()`). Chamar `.catch()` diretamente
+    // sobre `client.rpc(...)` lança `TypeError: client.rpc(...).catch is not a function`!
+    try {
+      await client.rpc("record_auth_event", { p_event: "LOGIN" });
+    } catch {
+      // Falha na telemetria de auditoria nunca impede o login já autenticado
+    }
 
     let resolved = await resolveAuthGateState(client, { skipSignOutOnEmptyProfile: true });
     if (resolved.gate === "unauthenticated" || resolved.gate === "session_expired") {
@@ -526,7 +531,11 @@ export async function verifyTotpFactor({ factorId = null, code }, client = getSu
   }
 
   if (factorId) {
-    await client.rpc("record_auth_event", { p_event: "MFA_ENROLLED" }).catch(() => {});
+    try {
+      await client.rpc("record_auth_event", { p_event: "MFA_ENROLLED" });
+    } catch {
+      // Ignora erro de telemetria
+    }
   }
   const resolved = await resolveAuthGateState(client);
   return { ok: true, ...resolved };
@@ -538,8 +547,16 @@ export async function verifyTotpFactor({ factorId = null, code }, client = getSu
 export async function signOutSecurely(client = getSupabaseClient()) {
   purgeLegacyInsecureStorage();
   if (client) {
-    await client.rpc("record_auth_event", { p_event: "LOGOUT" }).catch(() => {});
-    await client.auth.signOut().catch(() => {});
+    try {
+      await client.rpc("record_auth_event", { p_event: "LOGOUT" });
+    } catch {
+      // Ignora erro de telemetria no logout
+    }
+    try {
+      await client.auth.signOut();
+    } catch {
+      // Ignora falha de rede ao revogar sessão remota
+    }
   }
   sessionStorageAdapter.removeItem(AUTH_STORAGE_KEY);
 }
