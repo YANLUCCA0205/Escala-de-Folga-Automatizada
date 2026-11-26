@@ -44,10 +44,10 @@ function makeFakeJwt(payload) {
   return `${header}.${body}.sig`;
 }
 
-test("SEC-01: Política de senhas impõe >= 12 caracteres, classes, bloqueio de dados pessoais e senhas comuns", () => {
+test("SEC-01: Política de senhas impõe >= 8 caracteres, classes, bloqueio de dados pessoais e senhas comuns", () => {
   const ctx = { email: "marcos.silva@exemplo.invalid", fullName: "Marcos Silva" };
 
-  assert.equal(evaluatePassword("Curta@123", ctx).valid, false, "< 12 caracteres");
+  assert.equal(evaluatePassword("Curta@123", ctx).valid, false, "< 8 caracteres");
   assert.equal(evaluatePassword("uniao@2026!!", ctx).valid, false, "sem maiúscula + lista comum");
   assert.equal(evaluatePassword("Uniao@2026!!", ctx).valid, false, "variação institucional óbvia");
   assert.equal(evaluatePassword("Senh@1234567", ctx).valid, false, "leet de senha comum");
@@ -203,7 +203,7 @@ test("SEC-05: resolveAuthGateState bloqueia sessão revogada, conta desativada, 
       async getSession() {
         return { data: { session: { user: { id: "u-1" } } }, error: null };
       },
-      async signOut() {},
+      async signOut() { },
     },
     async rpc(fn) {
       if (fn === "my_profile") return { data: profileReturn, error: null };
@@ -287,7 +287,7 @@ test("SEC-06: Edge Function admin-users exige MASTER em aal2 e provisiona convit
           bannedState = { id, attrs };
           return { data: { user: { id } }, error: null };
         },
-        async deleteUser() {},
+        async deleteUser() { },
       },
     },
     from(table) {

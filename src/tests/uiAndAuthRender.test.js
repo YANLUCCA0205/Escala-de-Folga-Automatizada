@@ -39,7 +39,7 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
       createElement(AuthPages.LoginPage, {
         environmentLabel: "Ambiente Homologação",
         onSubmit: async () => ({ ok: false }),
-        onForgotPassword: () => {},
+        onForgotPassword: () => { },
       })
     );
 
@@ -67,13 +67,13 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
       })
     );
     assert.ok(inviteHtml.includes("Primeiro acesso e ativação de conta"));
-    assert.ok(inviteHtml.includes("Mínimo de 12 caracteres"));
+    assert.ok(inviteHtml.includes("Mínimo de 8 caracteres"));
 
     const forgotHtml = renderToStaticMarkup(
       createElement(AuthPages.ForgotPasswordPage, {
         environmentLabel: "Corporativo",
         onSubmit: async () => ({ ok: true }),
-        onBack: () => {},
+        onBack: () => { },
       })
     );
     assert.ok(forgotHtml.includes("Recuperação de senha"));
@@ -82,7 +82,7 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
       createElement(AuthPages.AccountBlockedPage, {
         environmentLabel: "Corporativo",
         variant: "deactivated",
-        onSignOut: () => {},
+        onSignOut: () => { },
       })
     );
     assert.ok(blockedHtml.includes("Conta desativada"));
@@ -90,7 +90,7 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
     const expiredHtml = renderToStaticMarkup(
       createElement(AuthPages.SessionExpiredPage, {
         environmentLabel: "Corporativo",
-        onContinue: () => {},
+        onContinue: () => { },
       })
     );
     assert.ok(expiredHtml.includes("Sessão encerrada ou expirada"));
@@ -99,7 +99,7 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
       createElement(AuthPages.ServiceUnavailablePage, {
         environmentLabel: "Corporativo",
         unconfigured: false,
-        onRetry: () => {},
+        onRetry: () => { },
       })
     );
     assert.ok(unavailableHtml.includes("Serviço de autenticação indisponível"));
@@ -112,17 +112,17 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
         {
           navGroups: operatorNav,
           activeItemId: "schedules",
-          onNavigate: () => {},
+          onNavigate: () => { },
           units: [
             { id: "LOJA_03", code: "LJ03", name: "LOJA 03", city: "Cidade Fictícia" },
             { id: "LOJA_01", code: "LJ01", name: "LOJA 01", city: "Cidade Fictícia" },
           ],
           selectedUnitId: "LOJA_03",
-          onSelectUnit: () => {},
+          onSelectUnit: () => { },
           selectedYearMonth: "2026-11",
           user: { fullName: "Operador Fictício", email: "op@exemplo.invalid", role: "OPERATOR" },
           themeId: "uniao_institucional",
-          onSignOut: () => {},
+          onSignOut: () => { },
         },
         createElement("div", null, "Conteúdo da grade")
       )

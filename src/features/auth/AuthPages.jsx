@@ -420,7 +420,7 @@ export function SetPasswordPage({
               size="lg"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mínimo de 12 caracteres"
+              placeholder="Mínimo de 8 caracteres"
               autoComplete="new-password"
               required
             />

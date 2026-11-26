@@ -185,8 +185,8 @@ export default function UsersAccessModule({
       setFormError("Selecione pelo menos uma unidade operacional autorizada.");
       return;
     }
-    if (!editingUser && deliveryMode === "custom_password" && customPassword.trim().length < 12) {
-      setFormError("A senha definida manualmente deve possuir pelo menos 12 caracteres.");
+    if (!editingUser && deliveryMode === "custom_password" && customPassword.trim().length < 8) {
+      setFormError("A senha definida manualmente deve possuir pelo menos 8 caracteres.");
       return;
     }
 
@@ -512,54 +512,54 @@ export default function UsersAccessModule({
                           { separator: true },
                           ...(u.status === "ACTIVE"
                             ? [
+                              {
+                                id: "suspend",
+                                icon: "lock",
+                                label: "Suspender acesso",
+                                disabled: isSelf,
+                                onClick: () =>
+                                  setConfirmState({
+                                    type: "status",
+                                    nextStatus: "SUSPENDED",
+                                    user: u,
+                                    danger: true,
+                                    title: "Suspender conta de operador",
+                                    description: `O operador ${u.email} perderá imediatamente o acesso operacional até ser reativado.`,
+                                  }),
+                              },
+                              {
+                                id: "deactivate",
+                                icon: "x",
+                                label: "Desativar conta",
+                                danger: true,
+                                disabled: isSelf,
+                                onClick: () =>
+                                  setConfirmState({
+                                    type: "status",
+                                    nextStatus: "DEACTIVATED",
+                                    user: u,
+                                    danger: true,
+                                    title: "Desativar conta permanentemente",
+                                    description: `As sessões de ${u.email} serão revogadas e o login bloqueado. O histórico de auditoria é preservado.`,
+                                  }),
+                              },
+                            ]
+                            : u.status === "SUSPENDED" || u.status === "DEACTIVATED"
+                              ? [
                                 {
-                                  id: "suspend",
-                                  icon: "lock",
-                                  label: "Suspender acesso",
-                                  disabled: isSelf,
+                                  id: "reactivate",
+                                  icon: "unlock",
+                                  label: "Reativar conta",
                                   onClick: () =>
                                     setConfirmState({
                                       type: "status",
-                                      nextStatus: "SUSPENDED",
+                                      nextStatus: "ACTIVE",
                                       user: u,
-                                      danger: true,
-                                      title: "Suspender conta de operador",
-                                      description: `O operador ${u.email} perderá imediatamente o acesso operacional até ser reativado.`,
-                                    }),
-                                },
-                                {
-                                  id: "deactivate",
-                                  icon: "x",
-                                  label: "Desativar conta",
-                                  danger: true,
-                                  disabled: isSelf,
-                                  onClick: () =>
-                                    setConfirmState({
-                                      type: "status",
-                                      nextStatus: "DEACTIVATED",
-                                      user: u,
-                                      danger: true,
-                                      title: "Desativar conta permanentemente",
-                                      description: `As sessões de ${u.email} serão revogadas e o login bloqueado. O histórico de auditoria é preservado.`,
+                                      title: "Reativar conta de operador",
+                                      description: `Restaurar o acesso operacional de ${u.email} às unidades autorizadas?`,
                                     }),
                                 },
                               ]
-                            : u.status === "SUSPENDED" || u.status === "DEACTIVATED"
-                              ? [
-                                  {
-                                    id: "reactivate",
-                                    icon: "unlock",
-                                    label: "Reativar conta",
-                                    onClick: () =>
-                                      setConfirmState({
-                                        type: "status",
-                                        nextStatus: "ACTIVE",
-                                        user: u,
-                                        title: "Reativar conta de operador",
-                                        description: `Restaurar o acesso operacional de ${u.email} às unidades autorizadas?`,
-                                      }),
-                                  },
-                                ]
                               : []),
                         ]}
                       />
@@ -729,7 +729,7 @@ export default function UsersAccessModule({
                   <Field
                     label="Senha inicial do operador"
                     required
-                    hint="Mínimo de 12 caracteres (maiúsculas, minúsculas, números e símbolos)."
+                    hint="Mínimo de 8 caracteres (maiúsculas, minúsculas, números e símbolos)."
                   >
                     {(id) => (
                       <TextInput
@@ -807,9 +807,8 @@ export default function UsersAccessModule({
                             onClick={() =>
                               togglePermOverride(p.code, setDeniedPerms, setExtraPerms)
                             }
-                            className={`erp-btn erp-btn--sm ${
-                              isDenied ? "erp-btn--danger-outline" : "erp-btn--secondary"
-                            }`}
+                            className={`erp-btn erp-btn--sm ${isDenied ? "erp-btn--danger-outline" : "erp-btn--secondary"
+                              }`}
                           >
                             {isDenied ? "Restringido" : "Padrão do perfil"}
                           </button>
@@ -819,9 +818,8 @@ export default function UsersAccessModule({
                             onClick={() =>
                               togglePermOverride(p.code, setExtraPerms, setDeniedPerms)
                             }
-                            className={`erp-btn erp-btn--sm ${
-                              isExtra ? "erp-btn--primary" : "erp-btn--secondary"
-                            }`}
+                            className={`erp-btn erp-btn--sm ${isExtra ? "erp-btn--primary" : "erp-btn--secondary"
+                              }`}
                           >
                             {isExtra ? "Concedido" : "Não incluído"}
                           </button>

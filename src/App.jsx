@@ -91,7 +91,7 @@ export default function App() {
 
   // Navegação e contexto global único de unidade
   const [activeNavId, setActiveNavId] = useState("schedules");
-  const [selectedUnitId, setSelectedUnitId] = useState("LOJA_03");
+  const [selectedUnitId, setSelectedUnitId] = useState("");
   const [selectedYearMonth, setSelectedYearMonth] = useState("2026-11");
   const [previewRole, setPreviewRole] = useState(null); // estritamente visual (exclusivo MASTER)
   const [syncStatus, setSyncStatus] = useState("idle");

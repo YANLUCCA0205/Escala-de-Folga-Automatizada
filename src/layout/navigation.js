@@ -109,6 +109,14 @@ export const NAV_GROUPS = [
         requiredAny: ["VIEW_BI", "MANAGE_STRUCTURE"],
       },
       {
+        id: "org_categories",
+        label: "Categorias funcionais",
+        icon: "sliders",
+        moduleKey: "organization",
+        params: { initialTab: "structure", section: "categories" },
+        requiredAny: ["VIEW_BI", "MANAGE_STRUCTURE"],
+      },
+      {
         id: "org_roles",
         label: "Funções e cargos",
         icon: "briefcase",

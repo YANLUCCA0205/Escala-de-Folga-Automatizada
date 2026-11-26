@@ -20,7 +20,7 @@
    npm run provision:master -- --email seu.email@uniaosupermercados.com.br --name "Seu Nome Completo"
    ```
    - Caso `npm run dev` esteja ativo, o script autentica em `http://127.0.0.1:5173/api/v9/internal/bootstrap` usando o segredo local `.data/admin.secret` (restrito a *loopback*). Caso esteja parado, abre `.data/pgdata` diretamente.
-3. Abra no navegador o **link criptográfico de uso único** emitido no terminal, defina a senha definitiva (>= 12 caracteres) e cadastre o segundo fator TOTP (`aal2`).
+3. Abra no navegador o **link criptográfico de uso único** emitido no terminal, defina a senha definitiva (>= 8 caracteres) e cadastre o segundo fator TOTP (`aal2`).
 
 ### Modo B — Projeto Supabase Cloud Externo
 1. Aplique as migrations `20261201000100` e `20261201000200` no projeto Supabase (`supabase db push`).
@@ -36,7 +36,7 @@
    ```
 4. O script invocará `public.admin_bootstrap_first_master` (que **recusa execução** caso já exista qualquer conta `MASTER` pendente ou ativa) e emitirá um link criptográfico de uso único.
 5. Ao abrir o link:
-   - O operador define sua senha definitiva (>= 12 caracteres, aprovada por `passwordPolicy.js` e GoTrue).
+   - O operador define sua senha definitiva (>= 8 caracteres, aprovada por `passwordPolicy.js` e GoTrue).
    - A conta passa de `PENDING` para `ACTIVE` (`complete_activation`).
    - O sistema exige imediatamente o cadastramento do segundo fator TOTP (`MfaEnrollPage`) para elevar a sessão a `aal2`.
 

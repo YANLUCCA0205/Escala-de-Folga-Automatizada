@@ -54,12 +54,12 @@ export default function EmployeesAndAvailabilityModule({
 
   // Estado para Promoção / Movimentação Guiada dentro da Central (Seção 17.2)
   const [movType, setMovType] = useState("PROMOTION_TRANSFER"); // 'PROMOTION_TRANSFER' | 'SAME_POS_SHIFT_RULE' | 'CREATE_NEW_POS'
-  const [movTargetUnitId, setMovTargetUnitId] = useState(selectedUnitId || "LOJA_03");
+  const [movTargetUnitId, setMovTargetUnitId] = useState(() => selectedUnitId || db.units?.[0]?.id || "");
   const [movPositionId, setMovPositionId] = useState("");
-  const [movNewSectorId, setMovNewSectorId] = useState("SEC_ACOUGUE");
-  const [movNewRoleId, setMovNewRoleId] = useState("R_ACOUGUEIRO");
-  const [movShiftId, setMovShiftId] = useState("SH_OP_MANHA_0640");
-  const [movRuleId, setMovRuleId] = useState("RULE_5X1");
+  const [movNewSectorId, setMovNewSectorId] = useState(() => db.sectors?.[0]?.id || "");
+  const [movNewRoleId, setMovNewRoleId] = useState(() => db.roles?.[0]?.id || "");
+  const [movShiftId, setMovShiftId] = useState(() => db.workShifts?.[0]?.id || "");
+  const [movRuleId, setMovRuleId] = useState(() => db.scheduleRules?.[0]?.id || "");
   const [movStartDate, setMovStartDate] = useState("2026-11-16");
   const [movReason, setMovReason] = useState("Promoção / Movimentação funcional autorizada");
 
@@ -133,8 +133,8 @@ export default function EmployeesAndAvailabilityModule({
         const hasAllocInUnit = db.allocations.some(
           (a) => a.employeeId === emp.id && a.unitId === selectedUnitId
         );
-        // Também mostra colaboradores sem alocação que pertençam à Loja 03 (como Edileuza INSS)
-        if (!db.allocations.some((a) => a.employeeId === emp.id) && selectedUnitId === "LOJA_03") {
+        // Também mostra colaboradores sem alocação que pertençam à unidade selecionada
+        if (!db.allocations.some((a) => a.employeeId === emp.id) && emp.homeUnitId === selectedUnitId) {
           return true;
         }
         return hasAllocInUnit;
@@ -172,16 +172,16 @@ export default function EmployeesAndAvailabilityModule({
       anchorLastRestDate: emp.anchorLastRestDate || "",
       notes: emp.notes || "",
       isSharedRateio: Boolean(emp.isSharedRateio),
-      homeUnitId: emp.homeUnitId || curAlloc?.unitId || selectedUnitId || "LOJA_03",
+      homeUnitId: emp.homeUnitId || curAlloc?.unitId || selectedUnitId || db.units?.[0]?.id || "",
       authorizedUnitIds: emp.authorizedUnitIds?.length
         ? emp.authorizedUnitIds
-        : [curAlloc?.unitId || selectedUnitId || "LOJA_03"],
+        : [curAlloc?.unitId || selectedUnitId || db.units?.[0]?.id || ""].filter(Boolean),
       rateioScheduleByDow: emp.rateioScheduleByDow || null,
     });
-    setMovTargetUnitId(curAlloc?.unitId || selectedUnitId || "LOJA_03");
+    setMovTargetUnitId(curAlloc?.unitId || selectedUnitId || db.units?.[0]?.id || "");
     setMovPositionId(vacantPositions[0]?.id || "");
-    setMovShiftId(curAlloc?.workShiftId || "SH_OP_MANHA_0640");
-    setMovRuleId(curAlloc?.scheduleRuleId || "RULE_5X1");
+    setMovShiftId(curAlloc?.workShiftId || db.workShifts?.[0]?.id || "");
+    setMovRuleId(curAlloc?.scheduleRuleId || db.scheduleRules?.[0]?.id || "");
   };
 
   // Admissão de novo colaborador
@@ -199,7 +199,9 @@ export default function EmployeesAndAvailabilityModule({
       fullName: hireName.trim().toUpperCase(),
       homeUnitId: pos.unitId,
       isSharedRateio: Boolean(pos.isSharedRateio),
-      authorizedUnitIds: pos.isSharedRateio ? ["LOJA_03", "LOJA_01", "LOJA_02"] : [pos.unitId],
+      authorizedUnitIds: pos.isSharedRateio
+        ? (db.units || []).map((u) => u.id)
+        : [pos.unitId],
       rateioScheduleByDow: null,
       hireDate,
       terminationDate: null,
@@ -1384,7 +1386,7 @@ export default function EmployeesAndAvailabilityModule({
                         <tbody>
                           {DOW_LABELS.map(([dowKey, dowName]) => {
                             const cfg = editEmpForm.rateioScheduleByDow?.[dowKey] || {
-                              unitId: "LOJA_03",
+                              unitId: selectedUnitId || db.units?.[0]?.id || "",
                               period: "INTEGRAL",
                             };
                             return (

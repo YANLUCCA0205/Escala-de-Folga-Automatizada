@@ -3,13 +3,13 @@
 // GESTÃO COMPLETA DO QUADRO DE POSTOS E VAGAS (v8.0 — Seções 6, 16 e 19)
 // =============================================================================
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   createSequentialPositions,
   STATUS_VAGA_META,
 } from "../domain/scheduleEngine.js";
 import { createUniaoModuleUi } from "../theme/uniaoTheme.js";
-import { Tabs, PageHeader } from "../ui/index.jsx";
+import { Tabs, PageHeader, Alert } from "../ui/index.jsx";
 
 export default function OrganizationAndPositionsModule({
   db,
@@ -45,12 +45,23 @@ export default function OrganizationAndPositionsModule({
   const [compTradeName, setCompTradeName] = useState(company.tradeName || "");
   const [compCnpj, setCompCnpj] = useState(company.cnpj || "");
 
+  const units = db.units || [];
+  const sectors = db.sectors || [];
+  const unitSectors = db.unitSectors || [];
+  const functionalCategories = db.functionalCategories || [];
+  const roles = db.roles || [];
+  const workShifts = db.workShifts || [];
+  const scheduleRules = db.scheduleRules || [];
+  const workPositions = db.workPositions || [];
+  const allocations = db.allocations || [];
+  const employees = db.employees || [];
+
   // Cadastro / Edição de Unidades (Lojas)
   const [editingUnitId, setEditingUnitId] = useState(null);
   const [unitCode, setUnitCode] = useState("");
   const [unitName, setUnitName] = useState("");
-  const [unitCity, setUnitCity] = useState("União");
-  const [unitState, setUnitState] = useState("BR");
+  const [unitCity, setUnitCity] = useState("");
+  const [unitState, setUnitState] = useState("");
 
   // Cadastro / Edição de Setores
   const [editingSectorId, setEditingSectorId] = useState(null);
@@ -59,39 +70,122 @@ export default function OrganizationAndPositionsModule({
   const [newSectorMinCov, setNewSectorMinCov] = useState(2);
   const [newSectorSunCov, setNewSectorSunCov] = useState(1);
 
+  // Cadastro / Edição de Categorias Funcionais
+  const [editingCatId, setEditingCatId] = useState(null);
+  const [newCatCode, setNewCatCode] = useState("");
+  const [newCatName, setNewCatName] = useState("");
+  const [catFeedback, setCatFeedback] = useState(null);
+
   // Cadastro / Edição de Funções
   const [editingRoleId, setEditingRoleId] = useState(null);
   const [newRoleName, setNewRoleName] = useState("");
   const [newRoleCode, setNewRoleCode] = useState("");
-  const [newRoleCatId, setNewRoleCatId] = useState("CAT_PERECIVEIS");
-  const [newRoleSecId, setNewRoleSecId] = useState("SEC_ACOUGUE");
+  const [newRoleCatId, setNewRoleCatId] = useState(() => functionalCategories[0]?.id || "");
+  const [newRoleSecId, setNewRoleSecId] = useState(() => sectors[0]?.id || "");
   const [newRoleCost, setNewRoleCost] = useState("");
+  const [roleFeedback, setRoleFeedback] = useState(null);
 
   // Gerador Automático de Postos por Quantidade
-  const [genSectorId, setGenSectorId] = useState("SEC_ACOUGUE");
-  const [genRoleId, setGenRoleId] = useState("R_ACOUGUEIRO");
-  const [genShiftId, setGenShiftId] = useState("SH_OP_MANHA_0640");
-  const [genRuleId, setGenRuleId] = useState("RULE_5X1");
+  const [genSectorId, setGenSectorId] = useState(() => sectors[0]?.id || "");
+  const [genRoleId, setGenRoleId] = useState(() => roles[0]?.id || "");
+  const [genShiftId, setGenShiftId] = useState(
+    () => workShifts.find((s) => s.active !== false)?.id || workShifts[0]?.id || ""
+  );
+  const [genRuleId, setGenRuleId] = useState(
+    () => scheduleRules.find((r) => r.active !== false)?.id || scheduleRules[0]?.id || ""
+  );
   const [genQuantity, setGenQuantity] = useState(3);
   const [genIsRateio, setGenIsRateio] = useState(false);
   const [genStatus, setGenStatus] = useState("OPEN_AUTHORIZED");
   const [genCost, setGenCost] = useState("");
+  const [batchFeedback, setBatchFeedback] = useState(null);
 
+  const unitsById = useMemo(
+    () => Object.fromEntries(units.map((u) => [u.id, u])),
+    [units]
+  );
+  const selectedUnit = unitsById[selectedUnitId] || null;
+  const selectedUnitLabel = selectedUnit?.name || selectedUnit?.code || selectedUnitId || "—";
+
+  const categoriesById = useMemo(
+    () => Object.fromEntries(functionalCategories.map((c) => [c.id, c])),
+    [functionalCategories]
+  );
   const sectorsById = useMemo(
-    () => Object.fromEntries(db.sectors.map((s) => [s.id, s])),
-    [db.sectors]
+    () => Object.fromEntries(sectors.map((s) => [s.id, s])),
+    [sectors]
   );
   const rolesById = useMemo(
-    () => Object.fromEntries(db.roles.map((r) => [r.id, r])),
-    [db.roles]
+    () => Object.fromEntries(roles.map((r) => [r.id, r])),
+    [roles]
   );
   const shiftsById = useMemo(
-    () => Object.fromEntries(db.workShifts.map((s) => [s.id, s])),
-    [db.workShifts]
+    () => Object.fromEntries(workShifts.map((s) => [s.id, s])),
+    [workShifts]
   );
   const rulesById = useMemo(
-    () => Object.fromEntries(db.scheduleRules.map((r) => [r.id, r])),
-    [db.scheduleRules]
+    () => Object.fromEntries(scheduleRules.map((r) => [r.id, r])),
+    [scheduleRules]
+  );
+
+  // Sincronização dinâmica dos seletores quando os registros do banco forem carregados ou alterados
+  useEffect(() => {
+    if (!editingRoleId) {
+      if (!categoriesById[newRoleCatId]) {
+        setNewRoleCatId(functionalCategories[0]?.id || "");
+      }
+      if (!sectorsById[newRoleSecId]) {
+        setNewRoleSecId(sectors[0]?.id || "");
+      }
+    }
+  }, [
+    editingRoleId,
+    categoriesById,
+    sectorsById,
+    newRoleCatId,
+    newRoleSecId,
+    functionalCategories,
+    sectors,
+  ]);
+
+  useEffect(() => {
+    if (!sectorsById[genSectorId]) {
+      setGenSectorId(sectors[0]?.id || "");
+    }
+  }, [sectorsById, genSectorId, sectors]);
+
+  useEffect(() => {
+    if (!rolesById[genRoleId]) {
+      setGenRoleId(roles[0]?.id || "");
+    }
+  }, [rolesById, genRoleId, roles]);
+
+  useEffect(() => {
+    if (!shiftsById[genShiftId]) {
+      setGenShiftId(
+        workShifts.find((s) => s.active !== false)?.id || workShifts[0]?.id || ""
+      );
+    }
+  }, [shiftsById, genShiftId, workShifts]);
+
+  useEffect(() => {
+    if (!rulesById[genRuleId]) {
+      setGenRuleId(
+        scheduleRules.find((r) => r.active !== false)?.id || scheduleRules[0]?.id || ""
+      );
+    }
+  }, [rulesById, genRuleId, scheduleRules]);
+
+  const rolesWithInvalidRefs = useMemo(
+    () =>
+      roles.filter(
+        (r) =>
+          !r.categoryId ||
+          !categoriesById[r.categoryId] ||
+          !r.defaultSectorId ||
+          !sectorsById[r.defaultSectorId]
+      ),
+    [roles, categoriesById, sectorsById]
   );
 
   const occupantByPositionId = useMemo(() => {
@@ -199,7 +293,7 @@ export default function OrganizationAndPositionsModule({
               code: cleanCode,
               name: cleanName,
               city: unitCity.trim(),
-              state: unitState.trim(),
+              state: unitState.trim().toUpperCase(),
             };
           }
         } else {
@@ -209,7 +303,7 @@ export default function OrganizationAndPositionsModule({
             code: cleanCode,
             name: cleanName,
             city: unitCity.trim(),
-            state: unitState.trim(),
+            state: unitState.trim().toUpperCase(),
             active: true,
           });
         }
@@ -221,6 +315,8 @@ export default function OrganizationAndPositionsModule({
     setEditingUnitId(null);
     setUnitCode("");
     setUnitName("");
+    setUnitCity("");
+    setUnitState("");
   };
 
   // Criar ou Editar Setor
@@ -291,42 +387,170 @@ export default function OrganizationAndPositionsModule({
     setNewSectorCode("");
   };
 
+  // Criar ou Editar Categoria Funcional
+  const handleSaveCategory = (e) => {
+    e.preventDefault();
+    const cleanCode = newCatCode.trim().toUpperCase();
+    const cleanName = newCatName.trim();
+    if (!cleanCode || !cleanName) {
+      setCatFeedback({
+        tone: "danger",
+        text: "Informe o código e o nome da categoria funcional.",
+      });
+      return;
+    }
+
+    const duplicateCode = functionalCategories.some(
+      (c) => c.id !== editingCatId && String(c.code || "").toUpperCase() === cleanCode
+    );
+    if (duplicateCode) {
+      setCatFeedback({
+        tone: "danger",
+        text: `Já existe uma categoria funcional com o código "${cleanCode}".`,
+      });
+      return;
+    }
+
+    const createdCatId = editingCatId ? null : `CAT_${cleanCode}_${Date.now()}`;
+
+    onMutateDb({
+      permission: "MANAGE_STRUCTURE",
+      module: "ESTRUTURA_ORGANIZACIONAL",
+      action: editingCatId ? "EDITAR_CATEGORIA_FUNCIONAL" : "CRIAR_CATEGORIA_FUNCIONAL",
+      entityType: "FUNCTIONAL_CATEGORY",
+      entityId: editingCatId || createdCatId,
+      summary: `${editingCatId ? "Atualizada" : "Cadastrada"} categoria funcional "${cleanName}" (${cleanCode}).`,
+      updater: (draft) => {
+        if (!Array.isArray(draft.functionalCategories)) draft.functionalCategories = [];
+        if (editingCatId) {
+          const cat = draft.functionalCategories.find((c) => c.id === editingCatId);
+          if (cat) {
+            cat.code = cleanCode;
+            cat.name = cleanName;
+          }
+        } else {
+          draft.functionalCategories.push({
+            id: createdCatId,
+            code: cleanCode,
+            name: cleanName,
+            hierarchyLevel: draft.functionalCategories.length + 1,
+            active: true,
+          });
+        }
+      },
+    });
+
+    setCatFeedback({
+      tone: "success",
+      text: `Categoria "${cleanName}" (${cleanCode}) ${editingCatId ? "atualizada" : "cadastrada"} com sucesso.`,
+    });
+    setEditingCatId(null);
+    setNewCatCode("");
+    setNewCatName("");
+  };
+
+  // Excluir Categoria Funcional (bloqueada quando houver funções vinculadas)
+  const handleDeleteCategory = (cat) => {
+    if (!cat) return;
+    const linkedRoles = roles.filter((r) => r.categoryId === cat.id);
+    if (linkedRoles.length > 0) {
+      setCatFeedback({
+        tone: "danger",
+        text: `Não é possível excluir a categoria "${cat.name}" porque existem ${linkedRoles.length} função(ões) vinculada(s). Regularize ou desvincule essas funções antes de excluir.`,
+      });
+      return;
+    }
+
+    onMutateDb({
+      permission: "MANAGE_STRUCTURE",
+      module: "ESTRUTURA_ORGANIZACIONAL",
+      action: "EXCLUIR_CATEGORIA_FUNCIONAL",
+      entityType: "FUNCTIONAL_CATEGORY",
+      entityId: cat.id,
+      summary: `Excluída categoria funcional "${cat.name}" (${cat.code}).`,
+      updater: (draft) => {
+        draft.functionalCategories = (draft.functionalCategories || []).filter(
+          (c) => c.id !== cat.id
+        );
+      },
+    });
+
+    setCatFeedback({
+      tone: "success",
+      text: `Categoria "${cat.name}" excluída.`,
+    });
+    if (editingCatId === cat.id) {
+      setEditingCatId(null);
+      setNewCatCode("");
+      setNewCatName("");
+    }
+  };
+
   // Criar ou Editar Função (Role)
   const handleSaveRole = (e) => {
     e.preventDefault();
-    if (!newRoleName.trim() || !newRoleCode.trim()) return;
+    const cleanCode = newRoleCode.trim().toUpperCase();
+    const cleanName = newRoleName.trim().toUpperCase();
+    if (!cleanName || !cleanCode) {
+      setRoleFeedback({
+        tone: "danger",
+        text: "Informe o código e o nome da função.",
+      });
+      return;
+    }
+    if (!newRoleCatId || !categoriesById[newRoleCatId]) {
+      setRoleFeedback({
+        tone: "danger",
+        text: "Selecione uma categoria funcional válida cadastrada no banco antes de salvar a função.",
+      });
+      return;
+    }
+    if (!newRoleSecId || !sectorsById[newRoleSecId]) {
+      setRoleFeedback({
+        tone: "danger",
+        text: "Selecione um setor padrão válido cadastrado no banco antes de salvar a função.",
+      });
+      return;
+    }
+
     const costVal = newRoleCost ? Number(newRoleCost) : null;
+    const createdRoleId = editingRoleId ? null : `R_${cleanCode}_${Date.now()}`;
 
     onMutateDb({
       permission: "MANAGE_STRUCTURE",
       module: "ESTRUTURA_ORGANIZACIONAL",
       action: editingRoleId ? "EDITAR_FUNCAO" : "CRIAR_FUNCAO",
       entityType: "ROLE",
-      entityId: editingRoleId || newRoleCode.trim().toUpperCase(),
-      summary: `${editingRoleId ? "Atualizada" : "Cadastrada"} função "${newRoleName.trim().toUpperCase()}" (${newRoleCode.trim().toUpperCase()}).`,
+      entityId: editingRoleId || createdRoleId,
+      summary: `${editingRoleId ? "Atualizada" : "Cadastrada"} função "${cleanName}" (${cleanCode}).`,
       updater: (draft) => {
+        if (!Array.isArray(draft.roles)) draft.roles = [];
         if (editingRoleId) {
           const r = draft.roles.find((x) => x.id === editingRoleId);
           if (r) {
-            r.name = newRoleName.trim().toUpperCase();
-            r.code = newRoleCode.trim().toUpperCase();
+            r.name = cleanName;
+            r.code = cleanCode;
             r.categoryId = newRoleCatId;
             r.defaultSectorId = newRoleSecId;
             r.projectedMonthlyCost = costVal;
           }
         } else {
           draft.roles.push({
-            id: `R_${newRoleCode.trim().toUpperCase()}_${Date.now()}`,
+            id: createdRoleId,
             categoryId: newRoleCatId,
             defaultSectorId: newRoleSecId,
-            code: newRoleCode.trim().toUpperCase(),
-            name: newRoleName.trim().toUpperCase(),
+            code: cleanCode,
+            name: cleanName,
             hierarchyRank: 20,
             projectedMonthlyCost: costVal,
             active: true,
           });
         }
       },
+    });
+    setRoleFeedback({
+      tone: "success",
+      text: `Função "${cleanName}" (${cleanCode}) ${editingRoleId ? "atualizada" : "cadastrada"} com sucesso.`,
     });
     setEditingRoleId(null);
     setNewRoleName("");
@@ -337,11 +561,55 @@ export default function OrganizationAndPositionsModule({
   // Geração automática de N postos numerados
   const handleCreateBatchPositions = (e) => {
     e.preventDefault();
-    if (!selectedUnitId) return;
+    if (!selectedUnitId || !unitsById[selectedUnitId]) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione uma unidade operacional válida antes de gerar postos.",
+      });
+      return;
+    }
+    const sector = sectorsById[genSectorId];
+    if (!sector) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione um setor operacional válido antes de gerar postos.",
+      });
+      return;
+    }
     const role = rolesById[genRoleId];
-    if (!role) return;
+    if (!role) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione uma função válida antes de gerar postos.",
+      });
+      return;
+    }
+    const shift = shiftsById[genShiftId];
+    if (!shift) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione uma jornada contratual válida antes de gerar postos.",
+      });
+      return;
+    }
+    const rule = rulesById[genRuleId];
+    if (!rule) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Selecione uma regra de escala válida antes de gerar postos.",
+      });
+      return;
+    }
+    const qty = Number(genQuantity);
+    if (!Number.isFinite(qty) || qty < 1 || qty > 50) {
+      setBatchFeedback({
+        tone: "danger",
+        text: "Informe uma quantidade válida entre 1 e 50 postos.",
+      });
+      return;
+    }
 
-    const existingForRole = db.workPositions.filter(
+    const existingForRole = workPositions.filter(
       (p) => p.unitId === selectedUnitId && p.roleId === genRoleId && !p.isSharedRateio
     );
     const startNum = existingForRole.length + 1;
@@ -349,12 +617,12 @@ export default function OrganizationAndPositionsModule({
 
     const newPositions = createSequentialPositions({
       unitId: selectedUnitId,
-      sectorId: genSectorId,
+      sectorId: sector.id,
       role,
-      quantity: Math.max(1, Number(genQuantity) || 1),
+      quantity: Math.floor(qty),
       startNumber: startNum,
-      defaultShiftId: genShiftId,
-      defaultRuleId: genRuleId,
+      defaultShiftId: shift.id,
+      defaultRuleId: rule.id,
       isSharedRateio: genIsRateio,
       initialStatus: genStatus,
       estimatedMonthlyCost: costVal,
@@ -366,10 +634,16 @@ export default function OrganizationAndPositionsModule({
       action: "GERAR_POSTOS_SEQUENCIAIS",
       entityType: "WORK_POSITION",
       entityId: newPositions.map((p) => p.code).join(","),
-      summary: `Criados automaticamente ${newPositions.length} posto(s) para a função ${role.name} (${newPositions[0].title} até ${newPositions[newPositions.length - 1].title}) na unidade ${selectedUnitId}.`,
+      unitId: selectedUnitId,
+      summary: `Criados automaticamente ${newPositions.length} posto(s) para a função ${role.name} (${newPositions[0].title} até ${newPositions[newPositions.length - 1].title}) na unidade ${selectedUnitLabel}.`,
       updater: (draft) => {
+        if (!Array.isArray(draft.workPositions)) draft.workPositions = [];
         draft.workPositions.push(...newPositions);
       },
+    });
+    setBatchFeedback({
+      tone: "success",
+      text: `${newPositions.length} posto(s) de "${role.name}" gerado(s) com sucesso em ${selectedUnitLabel}.`,
     });
   };
 
@@ -526,9 +800,15 @@ export default function OrganizationAndPositionsModule({
 
   const sectionTabs = [
     { id: "companies", label: "Empresas", icon: "building" },
-    { id: "units", label: "Unidades", icon: "store", badge: db.units.length },
-    { id: "sectors", label: "Setores", icon: "layers", badge: db.sectors.length },
-    { id: "roles", label: "Funções e cargos", icon: "briefcase", badge: db.roles.length },
+    { id: "units", label: "Unidades", icon: "store", badge: units.length },
+    { id: "sectors", label: "Setores", icon: "layers", badge: sectors.length },
+    {
+      id: "categories",
+      label: "Categorias funcionais",
+      icon: "sliders",
+      badge: functionalCategories.length,
+    },
+    { id: "roles", label: "Funções e cargos", icon: "briefcase", badge: roles.length },
     {
       id: "positions",
       label: "Quadro de postos e vagas",
@@ -608,7 +888,7 @@ export default function OrganizationAndPositionsModule({
             onSubmit={handleSaveUnit}
             style={{
               display: "grid",
-              gridTemplateColumns: "0.8fr 1.4fr 1fr auto",
+              gridTemplateColumns: "0.7fr 1.3fr 1fr 0.45fr auto",
               gap: 8,
               alignItems: "end",
               marginBottom: 14,
@@ -635,8 +915,19 @@ export default function OrganizationAndPositionsModule({
             <div>
               <label style={ui.label}>Cidade</label>
               <input
+                placeholder="Ex: Belo Horizonte"
                 value={unitCity}
                 onChange={(e) => setUnitCity(e.target.value)}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>UF</label>
+              <input
+                placeholder="MG"
+                maxLength={2}
+                value={unitState}
+                onChange={(e) => setUnitState(e.target.value.toUpperCase())}
                 style={ui.input}
               />
             </div>
@@ -682,7 +973,7 @@ export default function OrganizationAndPositionsModule({
                             setUnitCode(u.code);
                             setUnitName(u.name);
                             setUnitCity(u.city || "");
-                            setUnitState(u.state || "MG");
+                            setUnitState(u.state || "");
                           }}
                           style={ui.btnSmall}
                         >
@@ -710,7 +1001,7 @@ export default function OrganizationAndPositionsModule({
       {activeSection === "sectors" && (
         <div style={ui.card}>
           <div style={ui.cardTitle}>
-            Setores operacionais e cobertura mínima ({selectedUnitId})
+            Setores operacionais e cobertura mínima ({selectedUnitLabel})
           </div>
           <form
             onSubmit={handleSaveSector}
@@ -775,7 +1066,7 @@ export default function OrganizationAndPositionsModule({
                 <th style={ui.th}>Setor</th>
                 <th style={{ ...ui.th, textAlign: "center" }}>Mín. Dia Útil</th>
                 <th style={{ ...ui.th, textAlign: "center" }}>Mín. Domingo</th>
-                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitId})</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitLabel})</th>
                 <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
@@ -827,9 +1118,157 @@ export default function OrganizationAndPositionsModule({
         </div>
       )}
 
+      {activeSection === "categories" && (
+        <div style={ui.card}>
+          <div style={ui.cardTitle}>Categorias funcionais</div>
+          <div style={{ fontSize: 12, color: "var(--erp-ink-secondary)", marginBottom: 12 }}>
+            Cadastre manualmente as categorias funcionais utilizadas para classificar funções e cargos.
+          </div>
+
+          {catFeedback && (
+            <div style={{ marginBottom: 12 }}>
+              <Alert tone={catFeedback.tone}>{catFeedback.text}</Alert>
+            </div>
+          )}
+
+          <form
+            onSubmit={handleSaveCategory}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "0.9fr 1.6fr auto auto",
+              gap: 8,
+              alignItems: "end",
+              marginBottom: 14,
+            }}
+          >
+            <div>
+              <label style={ui.label}>Código</label>
+              <input
+                type="text"
+                placeholder="Ex: PERECIVEIS"
+                value={newCatCode}
+                onChange={(e) => {
+                  setNewCatCode(e.target.value);
+                  if (catFeedback) setCatFeedback(null);
+                }}
+                style={ui.input}
+              />
+            </div>
+            <div>
+              <label style={ui.label}>Nome da Categoria</label>
+              <input
+                type="text"
+                placeholder="Ex: Operação de Perecíveis"
+                value={newCatName}
+                onChange={(e) => {
+                  setNewCatName(e.target.value);
+                  if (catFeedback) setCatFeedback(null);
+                }}
+                style={ui.input}
+              />
+            </div>
+            <button type="submit" style={ui.btnPrimary}>
+              {editingCatId ? "Salvar categoria" : "Adicionar categoria"}
+            </button>
+            {editingCatId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingCatId(null);
+                  setNewCatCode("");
+                  setNewCatName("");
+                  setCatFeedback(null);
+                }}
+                style={ui.btnSmall}
+              >
+                Cancelar
+              </button>
+            )}
+          </form>
+
+          {functionalCategories.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--erp-ink-muted)", padding: "8px 0" }}>
+              Nenhuma categoria funcional cadastrada ainda. Utilize o formulário acima para cadastrar.
+            </div>
+          ) : (
+            <table style={ui.table}>
+              <thead>
+                <tr>
+                  <th style={ui.th}>Código</th>
+                  <th style={ui.th}>Categoria</th>
+                  <th style={{ ...ui.th, textAlign: "center" }}>Funções vinculadas</th>
+                  <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {functionalCategories.map((c) => {
+                  const linkedCount = roles.filter((r) => r.categoryId === c.id).length;
+                  return (
+                    <tr key={c.id}>
+                      <td style={{ ...ui.td, fontWeight: 700 }}>{c.code}</td>
+                      <td style={{ ...ui.td, fontWeight: 600 }}>{c.name}</td>
+                      <td style={{ ...ui.td, textAlign: "center" }}>{linkedCount}</td>
+                      <td style={{ ...ui.td, textAlign: "right" }}>
+                        <div style={{ display: "inline-flex", gap: 6 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingCatId(c.id);
+                              setNewCatCode(c.code || "");
+                              setNewCatName(c.name || "");
+                              setCatFeedback(null);
+                            }}
+                            style={ui.btnSmall}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(c)}
+                            title={
+                              linkedCount > 0
+                                ? `Possui ${linkedCount} função(ões) vinculada(s)`
+                                : "Excluir categoria"
+                            }
+                            style={{
+                              ...ui.btnSmall,
+                              color: linkedCount > 0 ? "var(--erp-ink-muted)" : "var(--erp-danger)",
+                              opacity: linkedCount > 0 ? 0.65 : 1,
+                            }}
+                          >
+                            Excluir
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {activeSection === "roles" && (
         <div style={ui.card}>
           <div style={ui.cardTitle}>Catálogo de funções e cargos</div>
+
+          {rolesWithInvalidRefs.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <Alert tone="warning" title="Funções com categoria ou setor pendente de regularização">
+                Existem {rolesWithInvalidRefs.length} função(ões) com referência de categoria ou setor
+                padrão inválida/ausente. Clique em <strong>Editar</strong> na função correspondente para
+                vincular registros válidos.
+              </Alert>
+            </div>
+          )}
+
+          {roleFeedback && (
+            <div style={{ marginBottom: 12 }}>
+              <Alert tone={roleFeedback.tone}>{roleFeedback.text}</Alert>
+            </div>
+          )}
+
           <form
             onSubmit={handleSaveRole}
             style={{
@@ -846,7 +1285,10 @@ export default function OrganizationAndPositionsModule({
                 type="text"
                 placeholder="Ex: PADEIRO"
                 value={newRoleCode}
-                onChange={(e) => setNewRoleCode(e.target.value)}
+                onChange={(e) => {
+                  setNewRoleCode(e.target.value);
+                  if (roleFeedback) setRoleFeedback(null);
+                }}
                 style={ui.input}
               />
             </div>
@@ -856,18 +1298,31 @@ export default function OrganizationAndPositionsModule({
                 type="text"
                 placeholder="Nome da Função"
                 value={newRoleName}
-                onChange={(e) => setNewRoleName(e.target.value)}
+                onChange={(e) => {
+                  setNewRoleName(e.target.value);
+                  if (roleFeedback) setRoleFeedback(null);
+                }}
                 style={ui.input}
               />
             </div>
             <div>
               <label style={ui.label}>Categoria</label>
               <select
-                value={newRoleCatId}
-                onChange={(e) => setNewRoleCatId(e.target.value)}
+                value={categoriesById[newRoleCatId] ? newRoleCatId : ""}
+                onChange={(e) => {
+                  setNewRoleCatId(e.target.value);
+                  if (roleFeedback) setRoleFeedback(null);
+                }}
                 style={ui.select}
               >
-                {db.functionalCategories.map((c) => (
+                {(functionalCategories.length === 0 || !categoriesById[newRoleCatId]) && (
+                  <option value="">
+                    {functionalCategories.length === 0
+                      ? "Nenhuma categoria cadastrada"
+                      : "Selecione uma categoria válida..."}
+                  </option>
+                )}
+                {functionalCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -877,11 +1332,21 @@ export default function OrganizationAndPositionsModule({
             <div>
               <label style={ui.label}>Setor Padrão</label>
               <select
-                value={newRoleSecId}
-                onChange={(e) => setNewRoleSecId(e.target.value)}
+                value={sectorsById[newRoleSecId] ? newRoleSecId : ""}
+                onChange={(e) => {
+                  setNewRoleSecId(e.target.value);
+                  if (roleFeedback) setRoleFeedback(null);
+                }}
                 style={ui.select}
               >
-                {db.sectors.map((s) => (
+                {(sectors.length === 0 || !sectorsById[newRoleSecId]) && (
+                  <option value="">
+                    {sectors.length === 0
+                      ? "Nenhum setor cadastrado"
+                      : "Selecione um setor válido..."}
+                  </option>
+                )}
+                {sectors.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                   </option>
@@ -898,30 +1363,85 @@ export default function OrganizationAndPositionsModule({
                 style={ui.input}
               />
             </div>
-            <button type="submit" style={ui.btnPrimary}>
-              {editingRoleId ? "Salvar função" : "Adicionar função"}
-            </button>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button type="submit" style={ui.btnPrimary}>
+                {editingRoleId ? "Salvar função" : "Adicionar função"}
+              </button>
+              {editingRoleId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingRoleId(null);
+                    setNewRoleCode("");
+                    setNewRoleName("");
+                    setNewRoleCatId(functionalCategories[0]?.id || "");
+                    setNewRoleSecId(sectors[0]?.id || "");
+                    setNewRoleCost("");
+                    setRoleFeedback(null);
+                  }}
+                  style={ui.btnSmall}
+                >
+                  Cancelar
+                </button>
+              )}
+            </div>
           </form>
 
           <table style={ui.table}>
             <thead>
               <tr>
                 <th style={ui.th}>Função / Cargo</th>
+                <th style={ui.th}>Categoria</th>
                 <th style={ui.th}>Setor Padrão</th>
-                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitId})</th>
+                <th style={{ ...ui.th, textAlign: "center" }}>Postos ({selectedUnitLabel})</th>
                 <th style={{ ...ui.th, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
-              {db.roles.map((r) => {
-                const count = db.workPositions.filter(
+              {roles.map((r) => {
+                const count = workPositions.filter(
                   (p) => p.unitId === selectedUnitId && p.roleId === r.id
                 ).length;
+                const cat = categoriesById[r.categoryId];
+                const sec = sectorsById[r.defaultSectorId];
                 return (
                   <tr key={r.id}>
                     <td style={{ ...ui.td, fontWeight: 600 }}>{r.name}</td>
-                    <td style={{ ...ui.td, color: "var(--erp-ink-secondary)" }}>
-                      {sectorsById[r.defaultSectorId]?.name || "—"}
+                    <td style={ui.td}>
+                      {cat ? (
+                        <span style={{ color: "var(--erp-ink-secondary)" }}>{cat.name}</span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "var(--erp-danger)",
+                            background: "#fef2f2",
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          Pendente / inválida
+                        </span>
+                      )}
+                    </td>
+                    <td style={ui.td}>
+                      {sec ? (
+                        <span style={{ color: "var(--erp-ink-secondary)" }}>{sec.name}</span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 700,
+                            color: "var(--erp-danger)",
+                            background: "#fef2f2",
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          Pendente / inválido
+                        </span>
+                      )}
                     </td>
                     <td style={{ ...ui.td, textAlign: "center" }}>{count}</td>
                     <td style={{ ...ui.td, textAlign: "right" }}>
@@ -930,11 +1450,12 @@ export default function OrganizationAndPositionsModule({
                           type="button"
                           onClick={() => {
                             setEditingRoleId(r.id);
-                            setNewRoleCode(r.code);
-                            setNewRoleName(r.name);
-                            setNewRoleCatId(r.categoryId || "CAT_PERECIVEIS");
-                            setNewRoleSecId(r.defaultSectorId || "SEC_ACOUGUE");
+                            setNewRoleCode(r.code || "");
+                            setNewRoleName(r.name || "");
+                            setNewRoleCatId(categoriesById[r.categoryId] ? r.categoryId : "");
+                            setNewRoleSecId(sectorsById[r.defaultSectorId] ? r.defaultSectorId : "");
                             setNewRoleCost(r.projectedMonthlyCost ?? "");
+                            setRoleFeedback(null);
                           }}
                           style={ui.btnSmall}
                         >
@@ -986,13 +1507,31 @@ export default function OrganizationAndPositionsModule({
         <>
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              Criação de postos de trabalho em lote ({selectedUnitId})
+              Criação de postos de trabalho em lote ({selectedUnitLabel})
             </div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
               Ao informar a Função e a Quantidade (ex.: <code>Açougueiro</code> · <code>3</code>), o
               sistema gera postos individuais com numeração sequencial automática na unidade ativa (
-              <strong>{selectedUnitId}</strong>).
+              <strong>{selectedUnitLabel}</strong>).
             </div>
+
+            {(sectors.length === 0 ||
+              roles.length === 0 ||
+              workShifts.length === 0 ||
+              scheduleRules.length === 0) && (
+              <div style={{ marginBottom: 12 }}>
+                <Alert tone="warning" title="Requisitos pendentes para geração de postos">
+                  Para gerar postos em lote, é necessário possuir ao menos um setor, uma função, uma
+                  jornada contratual e uma regra de escala cadastrados.
+                </Alert>
+              </div>
+            )}
+
+            {batchFeedback && (
+              <div style={{ marginBottom: 12 }}>
+                <Alert tone={batchFeedback.tone}>{batchFeedback.text}</Alert>
+              </div>
+            )}
 
             <form
               onSubmit={handleCreateBatchPositions}
@@ -1006,11 +1545,15 @@ export default function OrganizationAndPositionsModule({
               <div>
                 <label style={ui.label}>Setor</label>
                 <select
-                  value={genSectorId}
-                  onChange={(e) => setGenSectorId(e.target.value)}
+                  value={sectorsById[genSectorId] ? genSectorId : ""}
+                  onChange={(e) => {
+                    setGenSectorId(e.target.value);
+                    if (batchFeedback) setBatchFeedback(null);
+                  }}
                   style={ui.select}
                 >
-                  {db.sectors.map((s) => (
+                  {sectors.length === 0 && <option value="">Nenhum setor cadastrado</option>}
+                  {sectors.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
                     </option>
@@ -1021,11 +1564,15 @@ export default function OrganizationAndPositionsModule({
               <div>
                 <label style={ui.label}>Função</label>
                 <select
-                  value={genRoleId}
-                  onChange={(e) => setGenRoleId(e.target.value)}
+                  value={rolesById[genRoleId] ? genRoleId : ""}
+                  onChange={(e) => {
+                    setGenRoleId(e.target.value);
+                    if (batchFeedback) setBatchFeedback(null);
+                  }}
                   style={ui.select}
                 >
-                  {db.roles.map((r) => (
+                  {roles.length === 0 && <option value="">Nenhuma função cadastrada</option>}
+                  {roles.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
                     </option>
@@ -1036,11 +1583,15 @@ export default function OrganizationAndPositionsModule({
               <div>
                 <label style={ui.label}>Jornada Contratual Padrão</label>
                 <select
-                  value={genShiftId}
-                  onChange={(e) => setGenShiftId(e.target.value)}
+                  value={shiftsById[genShiftId] ? genShiftId : ""}
+                  onChange={(e) => {
+                    setGenShiftId(e.target.value);
+                    if (batchFeedback) setBatchFeedback(null);
+                  }}
                   style={ui.select}
                 >
-                  {db.workShifts.map((sh) => (
+                  {workShifts.length === 0 && <option value="">Nenhuma jornada cadastrada</option>}
+                  {workShifts.map((sh) => (
                     <option key={sh.id} value={sh.id}>
                       [{sh.shiftPeriod}] {sh.name}
                     </option>
@@ -1051,11 +1602,15 @@ export default function OrganizationAndPositionsModule({
               <div>
                 <label style={ui.label}>Regra de Escala Padrão</label>
                 <select
-                  value={genRuleId}
-                  onChange={(e) => setGenRuleId(e.target.value)}
+                  value={rulesById[genRuleId] ? genRuleId : ""}
+                  onChange={(e) => {
+                    setGenRuleId(e.target.value);
+                    if (batchFeedback) setBatchFeedback(null);
+                  }}
                   style={ui.select}
                 >
-                  {db.scheduleRules.map((rl) => (
+                  {scheduleRules.length === 0 && <option value="">Nenhuma regra cadastrada</option>}
+                  {scheduleRules.map((rl) => (
                     <option key={rl.id} value={rl.id}>
                       {rl.code} — {rl.name}
                     </option>
@@ -1130,7 +1685,7 @@ export default function OrganizationAndPositionsModule({
               }}
             >
               <div style={ui.cardTitle}>
-                Quadro Estrutural de Postos e Vagas — {selectedUnitId} ({filteredPositions.length} registros)
+                Quadro Estrutural de Postos e Vagas — {selectedUnitLabel} ({filteredPositions.length} registros)
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <select

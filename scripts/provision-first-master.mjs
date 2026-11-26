@@ -203,20 +203,20 @@ async function main() {
   const result =
     supabaseUrl && serviceKey
       ? await provisionAgainstSupabaseCloud({
-          supabaseUrl,
-          serviceKey,
-          email,
-          fullName,
-          mode: args.mode,
-          recover: args.recover,
-          origin: args.origin,
-        })
+        supabaseUrl,
+        serviceKey,
+        email,
+        fullName,
+        mode: args.mode,
+        recover: args.recover,
+        origin: args.origin,
+      })
       : await provisionAgainstLocalBackend({
-          email,
-          fullName,
-          recover: args.recover,
-          origin: args.origin,
-        });
+        email,
+        fullName,
+        recover: args.recover,
+        origin: args.origin,
+      });
 
   console.log("=================================================================");
   console.log(args.recover ? "RECUPERAÇÃO MASTER CONCLUÍDA" : "PRIMEIRO MASTER PROVISIONADO");
@@ -232,7 +232,7 @@ async function main() {
     console.log("\nConvite enviado para o e-mail corporativo informado.");
   }
   console.log("\nAo abrir o link:");
-  console.log("  1. Defina sua senha definitiva (>= 12 caracteres, maiúscula, minúscula, número e símbolo).");
+  console.log("  1. Defina sua senha definitiva (>= 8 caracteres, maiúscula, minúscula, número e símbolo).");
   console.log("  2. Cadastre a chave TOTP no seu aplicativo autenticador (Google/Microsoft Authenticator ou 1Password).");
 }
 
