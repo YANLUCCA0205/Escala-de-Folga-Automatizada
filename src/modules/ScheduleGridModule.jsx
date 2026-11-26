@@ -133,23 +133,46 @@ export default function ScheduleGridModule({
     () => db.dailyEntriesByMonth[selectedYearMonth] || [],
     [db.dailyEntriesByMonth, selectedYearMonth]
   );
+  // Colaboradores em rateio autorizados a constar na unidade selecionada
+  const sharedRateioEmpIdsForUnit = useMemo(() => {
+    const ids = new Set();
+    for (const emp of db.employees || []) {
+      if (emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(selectedUnitId)) {
+        ids.add(emp.id);
+      }
+    }
+    return ids;
+  }, [db.employees, selectedUnitId]);
+
   const monthEntries = useMemo(
-    () => allMonthEntries.filter((e) => !e.unitId || e.unitId === selectedUnitId),
-    [allMonthEntries, selectedUnitId]
+    () =>
+      allMonthEntries.filter(
+        (e) =>
+          !e.unitId ||
+          e.unitId === selectedUnitId ||
+          sharedRateioEmpIdsForUnit.has(e.employeeId)
+      ),
+    [allMonthEntries, selectedUnitId, sharedRateioEmpIdsForUnit]
   );
   const prevMonthEntries = useMemo(
     () =>
       (db.dailyEntriesByMonth[prevYearMonth] || []).filter(
-        (e) => !e.unitId || e.unitId === selectedUnitId
+        (e) =>
+          !e.unitId ||
+          e.unitId === selectedUnitId ||
+          sharedRateioEmpIdsForUnit.has(e.employeeId)
       ),
-    [db.dailyEntriesByMonth, prevYearMonth, selectedUnitId]
+    [db.dailyEntriesByMonth, prevYearMonth, selectedUnitId, sharedRateioEmpIdsForUnit]
   );
   const nextMonthEntries = useMemo(
     () =>
       (db.dailyEntriesByMonth[nextYearMonth] || []).filter(
-        (e) => !e.unitId || e.unitId === selectedUnitId
+        (e) =>
+          !e.unitId ||
+          e.unitId === selectedUnitId ||
+          sharedRateioEmpIdsForUnit.has(e.employeeId)
       ),
-    [db.dailyEntriesByMonth, nextYearMonth, selectedUnitId]
+    [db.dailyEntriesByMonth, nextYearMonth, selectedUnitId, sharedRateioEmpIdsForUnit]
   );
 
   const entriesByEmpDate = useMemo(() => {
@@ -1130,17 +1153,33 @@ export default function ScheduleGridModule({
   };
 
   // Agrupa postos e colaboradores por Setor na competência selecionada
+  // Inclui colaboradores em regime de RATEIO autorizados para a loja selecionada (constam em todas as lojas rateadas)
   const sectorsToRender = useMemo(() => {
     return db.sectors
       .filter((sec) => !filterSectorId || sec.id === filterSectorId)
       .map((sec) => {
-        const positionsInSector = db.workPositions
-          .filter(
-            (p) =>
-              p.unitId === selectedUnitId &&
-              p.sectorId === sec.id &&
-              p.status !== "DEACTIVATED"
-          )
+        const directUnitPositions = db.workPositions.filter(
+          (p) =>
+            p.unitId === selectedUnitId &&
+            p.sectorId === sec.id &&
+            p.status !== "DEACTIVATED"
+        );
+        const directPosIds = new Set(directUnitPositions.map((p) => p.id));
+        const sharedRateioPositions = db.workPositions.filter((p) => {
+          if (directPosIds.has(p.id) || p.sectorId !== sec.id || p.status === "DEACTIVATED") {
+            return false;
+          }
+          const alloc = db.allocations.find(
+            (a) =>
+              a.workPositionId === p.id &&
+              a.startDate <= `${selectedYearMonth}-31` &&
+              (!a.endDate || a.endDate >= `${selectedYearMonth}-01`)
+          );
+          if (!alloc) return false;
+          return sharedRateioEmpIdsForUnit.has(alloc.employeeId);
+        });
+
+        const positionsInSector = [...directUnitPositions, ...sharedRateioPositions]
           .map((pos) => {
             const alloc = db.allocations.find(
               (a) =>
@@ -1204,6 +1243,7 @@ export default function ScheduleGridModule({
     filterShiftPeriod,
     filterStatus,
     searchEmp,
+    sharedRateioEmpIdsForUnit,
   ]);
 
   const dayColWidth = viewDensity === "detailed" ? 44 : 34;

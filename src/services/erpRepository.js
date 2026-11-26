@@ -435,18 +435,7 @@ export function upgradeDatabaseToV8(rawDb) {
           : isRateio
             ? ["LOJA_03", "LOJA_01", "LOJA_02"]
             : [alloc?.unitId || "LOJA_03"],
-      rateioScheduleByDow:
-        emp.rateioScheduleByDow ||
-        (isRateio
-          ? {
-              "1": { unitId: "LOJA_03", period: "INTEGRAL" },
-              "2": { unitId: "LOJA_03", period: "INTEGRAL" },
-              "3": { unitId: "LOJA_01", period: "INTEGRAL" },
-              "4": { unitId: "LOJA_03", period: "INTEGRAL" },
-              "5": { unitId: "LOJA_02", period: "INTEGRAL" },
-              "6": { unitId: "LOJA_03", period: "INTEGRAL" },
-            }
-          : null),
+      rateioScheduleByDow: emp.rateioScheduleByDow || null,
     };
   });
 

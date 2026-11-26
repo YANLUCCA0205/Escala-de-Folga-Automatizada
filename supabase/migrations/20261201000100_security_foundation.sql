@@ -138,7 +138,6 @@ returns boolean language sql stable security definer set search_path = '' as $$
         where p.id = auth.uid()
           and p.status = 'ACTIVE'
           and not p.must_change_password
-          and (p.role <> 'MASTER' or coalesce(auth.jwt() ->> 'aal', 'aal1') = 'aal2')
      );
 $$;
 
@@ -172,16 +171,10 @@ returns boolean language sql stable security definer set search_path = '' as $$
      );
 $$;
 
--- Reautenticação por MFA recente: o claim amr traz o carimbo de tempo do último TOTP.
+-- Reautenticação por MFA desativada: exige apenas sessão válida.
 create or replace function private.recent_mfa(p_max_age_seconds integer)
 returns boolean language sql stable security definer set search_path = '' as $$
-  select coalesce(auth.jwt() ->> 'aal', 'aal1') = 'aal2'
-     and exists (
-       select 1
-         from jsonb_array_elements(coalesce(auth.jwt() -> 'amr', '[]'::jsonb)) a
-        where a ->> 'method' = 'totp'
-          and (a ->> 'timestamp')::bigint >= extract(epoch from now())::bigint - p_max_age_seconds
-     );
+  select private.session_is_valid();
 $$;
 
 create or replace function private.effective_permissions(p_user uuid)
@@ -387,7 +380,7 @@ begin
     'permissions', case when v_p.status = 'ACTIVE' and not v_p.must_change_password
                         then to_jsonb(private.effective_permissions(v_p.id)) else '[]'::jsonb end,
     'aal', coalesce(auth.jwt() ->> 'aal', 'aal1'),
-    'mfaRequired', v_p.role = 'MASTER',
+    'mfaRequired', false,
     'mfaEnrolled', exists (select 1 from auth.mfa_factors f
                             where f.user_id = v_p.id and f.status = 'verified'),
     'lastSignInAt', (select u.last_sign_in_at from auth.users u where u.id = v_p.id)

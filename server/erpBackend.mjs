@@ -89,6 +89,27 @@ export async function createErpBackend({
     ? crypto.randomBytes(32).toString("hex")
     : readOrCreateSecretFile(path.join(dataDir, "admin.secret"));
 
+  if (!inMemory && pgPath && fs.existsSync(pgPath)) {
+    const stalePid = path.join(pgPath, "postmaster.pid");
+    if (fs.existsSync(stalePid)) {
+      try {
+        fs.unlinkSync(stalePid);
+      } catch {
+        // Ignora se outro processo estiver segurando
+      }
+    }
+    const replOrigin = path.join(pgPath, "pg_logical", "replorigin_checkpoint");
+    if (fs.existsSync(replOrigin)) {
+      try {
+        if (fs.statSync(replOrigin).size === 0) {
+          fs.unlinkSync(replOrigin);
+        }
+      } catch {
+        // Ignora
+      }
+    }
+  }
+
   const db = new PGlite(pgPath);
 
   // Fila sequencial para isolar SET LOCAL ROLE / request.jwt.claims por requisição
@@ -117,6 +138,55 @@ export async function createErpBackend({
         await db.query("insert into auth.applied_migrations (version) values ($1)", [version]);
       }
     }
+
+    // Desativa exigência de MFA (2 fatores) em todos os níveis de serviço no banco local
+    await db.exec(`
+      create or replace function private.is_active_user()
+      returns boolean language sql stable security definer set search_path = '' as $$
+        select private.session_is_valid()
+           and exists (
+             select 1 from public.erp_profiles p
+              where p.id = auth.uid()
+                and p.status = 'ACTIVE'
+                and not p.must_change_password
+           );
+      $$;
+
+      create or replace function private.recent_mfa(p_max_age_seconds integer)
+      returns boolean language sql stable security definer set search_path = '' as $$
+        select private.session_is_valid();
+      $$;
+
+      create or replace function public.my_profile()
+      returns jsonb language plpgsql stable security definer set search_path = '' as $$
+      declare
+        v_p public.erp_profiles;
+      begin
+        if not private.session_is_valid() then
+          return null;
+        end if;
+        select * into v_p from public.erp_profiles where id = auth.uid();
+        if v_p.id is null then
+          return jsonb_build_object('status', 'NO_PROFILE');
+        end if;
+        return jsonb_build_object(
+          'id', v_p.id,
+          'email', v_p.email,
+          'fullName', v_p.full_name,
+          'role', v_p.role,
+          'status', v_p.status,
+          'mustChangePassword', v_p.must_change_password,
+          'authorizedUnits', case when v_p.status = 'ACTIVE' then to_jsonb(v_p.authorized_units) else '[]'::jsonb end,
+          'permissions', case when v_p.status = 'ACTIVE' and not v_p.must_change_password
+                              then to_jsonb(private.effective_permissions(v_p.id)) else '[]'::jsonb end,
+          'aal', coalesce(auth.jwt() ->> 'aal', 'aal1'),
+          'mfaRequired', false,
+          'mfaEnrolled', false,
+          'lastSignInAt', (select u.last_sign_in_at from auth.users u where u.id = v_p.id)
+        );
+      end;
+      $$;
+    `);
 
     // 2. Migração inicial automática e não destrutiva da base operacional caso erp_partitions esteja vazia
     if (autoMigrateBackupFile && fs.existsSync(autoMigrateBackupFile)) {

@@ -795,7 +795,7 @@ test("Cenário 21: Colaborador de RATEIO não infla quadro próprio da loja mas 
   assert.equal(bi.totals.plannedRateioPositions, 4, "4 postos de rateio contabilizados separadamente");
 });
 
-test("Cenário 22: validateMonthlyScheduleChecklist bloqueia conflito de colaborador em RATEIO alocado em duas lojas diferentes no mesmo dia", () => {
+test("Cenário 22: Colaborador em RATEIO não gera bloqueio impeditivo na validação da escala (rateio serve apenas para constar nas lojas rateadas)", () => {
   const rateioEmp = {
     id: "emp_rat",
     fullName: "SUPERVISOR COMPARTILHADO",
@@ -838,9 +838,10 @@ test("Cenário 22: validateMonthlyScheduleChecklist bloqueia conflito de colabor
     sectorsById: { GERENCIA: { id: "GERENCIA", name: "GERÊNCIA" } },
   });
 
-  assert.ok(
+  assert.equal(
     checklist.blockingErrors.some((err) => err.type === "RATEIO_UNIT_TIME_CONFLICT"),
-    "Deve detectar erro bloqueante RATEIO_UNIT_TIME_CONFLICT quando escalado em duas lojas no mesmo dia"
+    false,
+    "O rateio jamais deve gerar erro bloqueante RATEIO_UNIT_TIME_CONFLICT"
   );
 });
 
@@ -1554,9 +1555,9 @@ test("Cenário 38 (BUG-005): calculateShiftMetrics e checkInterjornadaRest calcu
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CENÁRIO 39 (BUG-006) — DETECÇÃO DE CONFLITO DE RATEIO POR rateioScheduleByDow E MERGE DE PARTIÇÕES POR UNIDADE
+// CENÁRIO 39 (BUG-006) — AGENDA DE RATEIO (rateioScheduleByDow) NÃO É FATOR IMPEDITIVO
 // ─────────────────────────────────────────────────────────────────────────────
-test("Cenário 39 (BUG-006): verifyScheduleConflicts detecta RATEIO_UNIT_TIME_CONFLICT quando colaborador de rateio trabalha na Loja 03 em dia da semana reservado à Loja 01 em rateioScheduleByDow", () => {
+test("Cenário 39 (BUG-006): verifyScheduleConflicts não bloqueia nem emite conflito por rateioScheduleByDow (o rateio serve apenas para constar nas lojas rateadas)", () => {
   const rateioEmp = {
     id: "emp_rateio_bug006",
     fullName: "SUPERVISOR RATEIO BUG 006",
@@ -1567,7 +1568,7 @@ test("Cenário 39 (BUG-006): verifyScheduleConflicts detecta RATEIO_UNIT_TIME_CO
     rateioScheduleByDow: {
       "1": { unitId: "LOJA_03", period: "INTEGRAL" },
       "2": { unitId: "LOJA_03", period: "INTEGRAL" },
-      "3": { unitId: "LOJA_01", period: "INTEGRAL" }, // Quarta-feira (dow=3) é dia da LOJA_01!
+      "3": { unitId: "LOJA_01", period: "INTEGRAL" },
       "4": { unitId: "LOJA_03", period: "INTEGRAL" },
       "5": { unitId: "LOJA_03", period: "INTEGRAL" },
       "6": { unitId: "LOJA_03", period: "INTEGRAL" },
@@ -1588,7 +1589,6 @@ test("Cenário 39 (BUG-006): verifyScheduleConflicts detecta RATEIO_UNIT_TIME_CO
     },
   ];
 
-  // Quarta-feira 2026-11-04 (dow = 3) escalado como 'T' na LOJA_03 quando rateioScheduleByDow['3'] aponta para LOJA_01
   const entries = [
     {
       employeeId: "emp_rateio_bug006",
@@ -1613,11 +1613,10 @@ test("Cenário 39 (BUG-006): verifyScheduleConflicts detecta RATEIO_UNIT_TIME_CO
     allUnitsMonthEntries: entries,
   });
 
-  assert.ok(
-    conflicts.some(
-      (c) => c.type === "RATEIO_UNIT_TIME_CONFLICT" && c.workDate === "2026-11-04"
-    ),
-    "Deve emitir conflito RATEIO_UNIT_TIME_CONFLICT quando escalado na LOJA_03 em dia reservado à LOJA_01 no rateioScheduleByDow"
+  assert.equal(
+    conflicts.some((c) => c.type === "RATEIO_UNIT_TIME_CONFLICT"),
+    false,
+    "A agenda de rateio não deve ser fator impeditivo nem emitir RATEIO_UNIT_TIME_CONFLICT"
   );
 });
 

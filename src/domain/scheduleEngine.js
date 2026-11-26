@@ -1136,7 +1136,6 @@ export function verifyScheduleConflicts({
   marketCalendarByDate = {},
   monthEntries = [],
   previousMonthEntries = [],
-  allUnitsMonthEntries = [],
 }) {
   const conflicts = [];
   const dates = listDatesInYearMonth(yearMonth);
@@ -1344,63 +1343,10 @@ export function verifyScheduleConflicts({
     }
   }
 
-  // 2. Verifica duplicidade de alocação simultânea de colaborador RATEIO em duas unidades no mesmo dia
-  // ou conflito com a agenda semanal de rateio (rateioScheduleByDow)
-  const rateioConflictIds = new Set();
-  if (allUnitsMonthEntries && allUnitsMonthEntries.length > 0) {
-    const workingByEmpDate = {};
-    for (const e of allUnitsMonthEntries) {
-      if (e.status === "T" || e.status === "MEIO_EXP") {
-        const key = `${e.employeeId}__${e.workDate}`;
-        (workingByEmpDate[key] = workingByEmpDate[key] || []).push(e);
-      }
-    }
-    for (const [key, list] of Object.entries(workingByEmpDate)) {
-      const distinctUnits = [...new Set(list.map((x) => x.unitId).filter(Boolean))];
-      if (distinctUnits.length > 1) {
-        const [empId, workDate] = key.split("__");
-        const emp = employees.find((x) => x.id === empId);
-        const confId = `conf_rateio_${empId}_${workDate}`;
-        rateioConflictIds.add(confId);
-        conflicts.push({
-          id: confId,
-          severity: "CRITICAL",
-          blocking: true,
-          type: "RATEIO_UNIT_TIME_CONFLICT",
-          workDate,
-          employeeId: empId,
-          employeeName: emp?.fullName || empId,
-          message: `Conflito de Rateio: ${emp?.fullName || empId} está escalado simultaneamente em mais de uma loja (${distinctUnits.join(", ")}) no dia ${workDate}.`,
-        });
-      }
-    }
-  }
-
-  for (const e of monthEntries) {
-    if (e.status !== "T" && e.status !== "MEIO_EXP") continue;
-    const entryUnit = e.unitId || unitId;
-    if (unitId && entryUnit && entryUnit !== unitId) continue;
-    const emp = employees.find((x) => x.id === e.employeeId);
-    if (!emp?.isSharedRateio || !emp.rateioScheduleByDow) continue;
-    const dow = String(getDayOfWeekISO(e.workDate));
-    const expectedRateioUnit = emp.rateioScheduleByDow[dow]?.unitId;
-    if (expectedRateioUnit && entryUnit && expectedRateioUnit !== entryUnit) {
-      const confId = `conf_rateio_${emp.id}_${e.workDate}`;
-      if (!rateioConflictIds.has(confId)) {
-        rateioConflictIds.add(confId);
-        conflicts.push({
-          id: confId,
-          severity: "CRITICAL",
-          blocking: true,
-          type: "RATEIO_UNIT_TIME_CONFLICT",
-          workDate: e.workDate,
-          employeeId: emp.id,
-          employeeName: emp.fullName,
-          message: `Conflito de Rateio: ${emp.fullName} está escalado trabalhando em ${entryUnit} no dia ${e.workDate}, porém sua agenda de rateio reserva este dia da semana para ${expectedRateioUnit}.`,
-        });
-      }
-    }
-  }
+  // 2. Nota de Domínio (Rateio Multiunidade):
+  // A agenda/configuração de rateio (isSharedRateio / authorizedUnitIds / rateioScheduleByDow)
+  // serve exclusivamente para que o colaborador conste nas lojas em que é rateado,
+  // NÃO constituindo fator impeditivo nem gerando bloqueios ou alertas na escala.
 
   // 3. Verifica cobertura mínima diária por setor (respeitando dias em que o mercado está FECHADO)
   const activeSectorIds = [
@@ -1503,7 +1449,6 @@ export function validateMonthlyScheduleChecklist({
   marketCalendarByDate = {},
   monthEntries = [],
   previousMonthEntries = [],
-  allUnitsMonthEntries = [],
 }) {
   const allConflicts = verifyScheduleConflicts({
     unitId,
@@ -1518,7 +1463,6 @@ export function validateMonthlyScheduleChecklist({
     marketCalendarByDate,
     monthEntries,
     previousMonthEntries,
-    allUnitsMonthEntries,
   });
 
   const blockingErrors = allConflicts.filter((c) => c.blocking === true);

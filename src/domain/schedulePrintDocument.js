@@ -558,7 +558,7 @@ export function listPrintableUnitSectors({ db, unitId, yearMonth }) {
   return (db.sectors || [])
     .map((sec) => {
       const filledPositions = (db.workPositions || []).filter((pos) => {
-        if (pos.unitId !== unitId || pos.sectorId !== sec.id || pos.status === "DEACTIVATED") {
+        if (pos.sectorId !== sec.id || pos.status === "DEACTIVATED") {
           return false;
         }
         const alloc = (db.allocations || []).find(
@@ -569,7 +569,9 @@ export function listPrintableUnitSectors({ db, unitId, yearMonth }) {
         );
         if (!alloc) return false;
         const emp = employeesById[alloc.employeeId];
-        return Boolean(emp && String(emp.fullName || "").trim());
+        if (!emp || !String(emp.fullName || "").trim()) return false;
+        if (pos.unitId === unitId) return true;
+        return Boolean(emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId));
       });
 
       return {
@@ -647,9 +649,11 @@ export function buildSchedulePrintDocument({
       .map((c) => [c.calendarDate, c])
   );
 
-  const rawMonthEntries = (db?.dailyEntriesByMonth?.[yearMonth] || []).filter(
-    (e) => !e.unitId || e.unitId === unitId
-  );
+  const rawMonthEntries = (db?.dailyEntriesByMonth?.[yearMonth] || []).filter((e) => {
+    if (!e.unitId || e.unitId === unitId) return true;
+    const emp = employeesById[e.employeeId];
+    return Boolean(emp?.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId));
+  });
   const entriesByEmpDate = {};
   for (const entry of rawMonthEntries) {
     if (!entriesByEmpDate[entry.employeeId]) {
@@ -687,15 +691,21 @@ export function buildSchedulePrintDocument({
   const selectedSet =
     sectorScope === "SELECTED" ? new Set(selectedSectorIds || []) : null;
 
-  // Coleta APENAS postos efetivamente ocupados por colaboradores reais (Seção 1.3)
+  // Coleta APENAS postos efetivamente ocupados por colaboradores reais (Seção 1.3),
+  // incluindo colaboradores em RATEIO autorizados para a loja selecionada.
   const populatedSectors = [];
   for (const sec of db?.sectors || []) {
     if (selectedSet && !selectedSet.has(sec.id)) continue;
 
     const sectorRows = [];
-    const positionsInSector = (db?.workPositions || []).filter(
+    const seenEmpIdsInSector = new Set();
+    const directPositions = (db?.workPositions || []).filter(
       (p) => p.unitId === unitId && p.sectorId === sec.id && p.status !== "DEACTIVATED"
     );
+    const sharedRateioPositions = (db?.workPositions || []).filter(
+      (p) => p.unitId !== unitId && p.sectorId === sec.id && p.status !== "DEACTIVATED"
+    );
+    const positionsInSector = [...directPositions, ...sharedRateioPositions];
 
     for (const pos of positionsInSector) {
       const alloc = (db?.allocations || []).find(
@@ -708,6 +718,14 @@ export function buildSchedulePrintDocument({
 
       const emp = employeesById[alloc.employeeId];
       if (!emp || !String(emp.fullName || "").trim()) continue;
+      if (
+        pos.unitId !== unitId &&
+        !(emp.isSharedRateio && (emp.authorizedUnitIds || []).includes(unitId))
+      ) {
+        continue;
+      }
+      if (seenEmpIdsInSector.has(emp.id)) continue;
+      seenEmpIdsInSector.add(emp.id);
 
       const shift = shiftsById[alloc.workShiftId || pos.defaultShiftId] || null;
       const rule = rulesById[alloc.scheduleRuleId || pos.defaultRuleId] || null;

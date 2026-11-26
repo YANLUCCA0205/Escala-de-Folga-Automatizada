@@ -96,17 +96,6 @@ export async function handleAdminUsersRequest({
   }
 
   const actorId = userData.user.id;
-  const claims = decodeVerifiedJwtClaims(bearerToken);
-  if (claims.aal !== "aal2") {
-    return {
-      status: 403,
-      payload: {
-        ok: false,
-        error: "MFA_REQUIRED",
-        message: "Operações de governança exigem sessão MASTER com autenticação multifator (MFA) verificada.",
-      },
-    };
-  }
 
   // 2. Confirma no banco que o chamador é MASTER ativo
   const { data: actorProfile, error: profErr } = await serviceClient

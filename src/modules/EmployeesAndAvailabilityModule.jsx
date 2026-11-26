@@ -176,15 +176,7 @@ export default function EmployeesAndAvailabilityModule({
       authorizedUnitIds: emp.authorizedUnitIds?.length
         ? emp.authorizedUnitIds
         : [curAlloc?.unitId || selectedUnitId || "LOJA_03"],
-      rateioScheduleByDow: emp.rateioScheduleByDow || {
-        "1": { unitId: "LOJA_03", period: "INTEGRAL" },
-        "2": { unitId: "LOJA_03", period: "INTEGRAL" },
-        "3": { unitId: "LOJA_01", period: "INTEGRAL" },
-        "4": { unitId: "LOJA_03", period: "INTEGRAL" },
-        "5": { unitId: "LOJA_02", period: "INTEGRAL" },
-        "6": { unitId: "LOJA_03", period: "INTEGRAL" },
-        "0": { unitId: "FOLGA", period: "FOLGA" },
-      },
+      rateioScheduleByDow: emp.rateioScheduleByDow || null,
     });
     setMovTargetUnitId(curAlloc?.unitId || selectedUnitId || "LOJA_03");
     setMovPositionId(vacantPositions[0]?.id || "");
@@ -1321,8 +1313,8 @@ export default function EmployeesAndAvailabilityModule({
                     color: "#581c87",
                   }}
                 >
-                  🔗 <strong>Gestão de Colaboradores Compartilhados (RATEIO Multiunidade — Seção 18):</strong>{" "}
-                  Defina a unidade administrativa principal, as lojas autorizadas e a distribuição de atuação por dia da semana para evitar conflitos de horário e dupla contagem de Headcount.
+                  🔗 <strong>Gestão de Colaboradores Compartilhados (RATEIO Multiunidade):</strong>{" "}
+                  O rateio serve exclusivamente para que o colaborador conste nas lojas em que é rateado. A agenda de rateio abaixo é apenas informativa e não bloqueia nem gera impedimentos na escala mensal.
                 </div>
 
                 <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>

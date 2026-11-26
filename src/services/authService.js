@@ -223,14 +223,7 @@ export async function resolveAuthGateState(client = getSupabaseClient(), { urlFl
       return { gate: "set_password_forced", profile };
     }
 
-    // Exige MFA para MASTER (obrigatório) ou para operadores que já cadastraram fator MFA
-    if (profile.mfaRequired && !profile.mfaEnrolled) {
-      return { gate: "mfa_enroll_required", profile };
-    }
-    if ((profile.mfaRequired || profile.mfaEnrolled) && profile.aal !== "aal2") {
-      return { gate: "mfa_verify_required", profile };
-    }
-
+    // Verificação de 2 fatores (MFA/TOTP) desativada em todos os níveis de serviço
     return { gate: "authenticated", profile };
   } catch (err) {
     if (isNetworkError(err)) {
@@ -423,15 +416,23 @@ export async function startTotpEnrollment(client = getSupabaseClient()) {
   // Limpa fatores TOTP não verificados anteriores para evitar duplicidade
   const { data: existing } = await client.auth.mfa.listFactors();
   for (const f of existing?.all || []) {
-    if (f.status === "unverified") {
+    if (f.status !== "verified") {
       await client.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
     }
   }
 
-  const { data, error } = await client.auth.mfa.enroll({
+  let { data, error } = await client.auth.mfa.enroll({
     factorType: "totp",
     friendlyName: "União Workforce ERP",
   });
+  if (error && String(error.message || "").toLowerCase().includes("already exists")) {
+    const retryRes = await client.auth.mfa.enroll({
+      factorType: "totp",
+      friendlyName: `União Workforce ERP (${Date.now().toString(36)})`,
+    });
+    data = retryRes.data;
+    error = retryRes.error;
+  }
   if (error || !data?.id) {
     throw new Error(error?.message || "Não foi possível iniciar o cadastro MFA.");
   }
