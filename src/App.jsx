@@ -730,6 +730,7 @@ export default function App() {
               syncStatus={syncStatus}
               onMutateDb={handleMutateDb}
               onNavigate={setActiveNavId}
+              onNotify={showToast}
             />
           )}
 

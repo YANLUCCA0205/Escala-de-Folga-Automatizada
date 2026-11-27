@@ -125,8 +125,37 @@ export function formatMinutesToTime(totalMinutes) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 1.1 MOTOR ARITMÉTICO DE JORNADAS (8 COLUNAS DE HORÁRIO + INTRA/INTERJORNADA)
+// 1.1 MOTOR ARITMÉTICO DE JORNADAS (7/8 COLUNAS DE HORÁRIO + INTRA/INTERJORNADA)
 // ─────────────────────────────────────────────────────────────────────────────
+export function computeBaseWorkload(entryTime, breakStart, breakEnd, exitBaseTime) {
+  const entryMinutes = parseTimeToMinutes(entryTime || "00:00");
+  const breakStartMinutes = parseTimeToMinutes(breakStart || "00:00");
+  const breakEndMinutes = parseTimeToMinutes(breakEnd || "00:00");
+  const exitBaseMinutes = parseTimeToMinutes(exitBaseTime || "00:00");
+
+  const rawBreakDuration =
+    breakEndMinutes >= breakStartMinutes
+      ? breakEndMinutes - breakStartMinutes
+      : 24 * 60 - breakStartMinutes + breakEndMinutes;
+  const rawSpanBase =
+    exitBaseMinutes >= entryMinutes
+      ? exitBaseMinutes - entryMinutes
+      : 24 * 60 - entryMinutes + exitBaseMinutes;
+
+  const isInvertedBreak =
+    breakEndMinutes < breakStartMinutes && rawBreakDuration >= rawSpanBase;
+  const breakDurationMinutes = isInvertedBreak ? 0 : rawBreakDuration;
+  const minutes = Math.max(0, rawSpanBase - breakDurationMinutes);
+
+  return {
+    minutes,
+    formatted: formatMinutesToTime(minutes),
+    breakDurationMinutes,
+    rawSpanBase,
+    isInvertedBreak,
+  };
+}
+
 export function calculateShiftMetrics(shift) {
   if (!shift) {
     return {
@@ -146,24 +175,19 @@ export function calculateShiftMetrics(shift) {
     shift.effectiveExitTime || shift.exitBaseTime || "18:00"
   );
 
-  const declaredBaseMinutes = parseTimeToMinutes(shift.baseWorkload || "07:20");
+  const baseCalc = computeBaseWorkload(
+    shift.entryTime || "08:00",
+    shift.breakStart || "12:00",
+    shift.breakEnd || "14:00",
+    shift.exitBaseTime || "18:00"
+  );
+  const declaredBaseMinutes = parseTimeToMinutes(shift.baseWorkload || baseCalc.formatted || "07:20");
   const declaredExtensionMinutes = parseTimeToMinutes(shift.extensionWorkload || "00:00");
   const declaredContractMinutes = parseTimeToMinutes(
-    shift.contractDailyWorkload || shift.baseWorkload || "07:20"
+    shift.contractDailyWorkload || shift.baseWorkload || baseCalc.formatted || "07:20"
   );
 
-  const rawBreakDuration =
-    breakEndMinutes >= breakStartMinutes
-      ? breakEndMinutes - breakStartMinutes
-      : 24 * 60 - breakStartMinutes + breakEndMinutes;
-  const rawSpanBase = exitBaseMinutes >= entryMinutes
-    ? exitBaseMinutes - entryMinutes
-    : 24 * 60 - entryMinutes + exitBaseMinutes;
-
-  const isInvertedBreak = breakEndMinutes < breakStartMinutes && rawBreakDuration >= rawSpanBase;
-  const breakDurationMinutes = isInvertedBreak ? 0 : rawBreakDuration;
-
-  const derivedBaseMinutes = Math.max(0, rawSpanBase - breakDurationMinutes);
+  const { breakDurationMinutes, rawSpanBase, isInvertedBreak, minutes: derivedBaseMinutes } = baseCalc;
   const derivedExtensionMinutes =
     effectiveExitMinutes >= exitBaseMinutes
       ? effectiveExitMinutes - exitBaseMinutes
@@ -515,6 +539,548 @@ export function computeCycleStateFromEntries({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 4.1 REGRAS PADRÃO 5X2, NORMALIZAÇÃO E VALIDAÇÃO DE CONFIGURAÇÃO DE REGRAS
+// ─────────────────────────────────────────────────────────────────────────────
+export const STANDARD_5X2_SCHEDULE_RULES = [
+  {
+    id: "RULE_5X2_DOM_SAB_TER",
+    code: "5X2 DOM SAB TER",
+    name: "5x2 Dom / Sáb / Ter (Domingo fixo)",
+    description: "5 dias de trabalho, 2 dias de descanso (Domingo fixo + Sábado ou Terça-feira), máximo 5 dias consecutivos.",
+    ruleType: "5X2",
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    allowedRestDows: [0, 6, 2],
+    fixedRestDows: [0],
+    fixedWeekdays: false,
+    maxConsecutiveWorkDays: 5,
+    requiresSundayLunchSlot: false,
+    closedMarketCountsAsRest: true,
+    effectiveFrom: "2026-01-01",
+  },
+  {
+    id: "RULE_5X2_DOM_SAB",
+    code: "5X2 DOM SAB",
+    name: "5x2 Dom / Sáb (Fixos)",
+    description: "5 dias de trabalho, 2 dias de descanso fixos no Sábado e Domingo, máximo 5 dias consecutivos.",
+    ruleType: "5X2",
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    allowedRestDows: [0, 6],
+    fixedRestDows: [0, 6],
+    fixedWeekdays: true,
+    maxConsecutiveWorkDays: 5,
+    requiresSundayLunchSlot: false,
+    closedMarketCountsAsRest: true,
+    effectiveFrom: "2026-01-01",
+  },
+  {
+    id: "RULE_5X2_DOM_TER_QUA_QUI",
+    code: "5X2 DOM TER QUA QUI",
+    name: "5x2 Dom / Ter / Qua / Qui (Domingo fixo)",
+    description: "5 dias de trabalho, 2 dias de descanso (Domingo fixo + Terça, Quarta ou Quinta-feira), máximo 5 dias consecutivos.",
+    ruleType: "5X2",
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    allowedRestDows: [0, 2, 3, 4],
+    fixedRestDows: [0],
+    fixedWeekdays: false,
+    maxConsecutiveWorkDays: 5,
+    requiresSundayLunchSlot: false,
+    closedMarketCountsAsRest: true,
+    effectiveFrom: "2026-01-01",
+  },
+  {
+    id: "RULE_5X2_DOM_QUA_SEX",
+    code: "5X2 DOM QUARTA SEXTA",
+    name: "5x2 Dom / Quarta / Sexta (Domingo fixo)",
+    description: "5 dias de trabalho, 2 dias de descanso (Domingo fixo + Quarta ou Sexta-feira), máximo 5 dias consecutivos.",
+    ruleType: "5X2",
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    allowedRestDows: [0, 3, 5],
+    fixedRestDows: [0],
+    fixedWeekdays: false,
+    maxConsecutiveWorkDays: 5,
+    requiresSundayLunchSlot: false,
+    closedMarketCountsAsRest: true,
+    effectiveFrom: "2026-01-01",
+  },
+];
+
+function normalizeRuleCodeKey(code) {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+}
+
+export function ensureStandardScheduleRules(scheduleRules = [], deletedEntityIds = []) {
+  const existing = Array.isArray(scheduleRules) ? [...scheduleRules] : [];
+  const deletedSet = new Set((deletedEntityIds || []).map(String));
+  const existingIds = new Set(existing.map((r) => r?.id).filter(Boolean));
+  const existingCodes = new Set(existing.map((r) => normalizeRuleCodeKey(r?.code)).filter(Boolean));
+
+  for (const stdRule of STANDARD_5X2_SCHEDULE_RULES) {
+    const codeKey = normalizeRuleCodeKey(stdRule.code);
+    if (deletedSet.has(stdRule.id) || existingIds.has(stdRule.id) || existingCodes.has(codeKey)) {
+      continue;
+    }
+    existing.push({ ...stdRule });
+    existingIds.add(stdRule.id);
+    existingCodes.add(codeKey);
+  }
+  return existing;
+}
+
+function dedupeValidDows(list) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of list || []) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 0 && n <= 6 && !seen.has(n)) {
+      seen.add(n);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+export function normalizeScheduleRule(rule) {
+  if (!rule) return null;
+  const workDaysInCycle = Math.max(1, Number(rule.workDaysInCycle ?? 5) || 5);
+  const restDaysInCycle = Math.max(1, Number(rule.restDaysInCycle ?? 1) || 1);
+  const maxConsecutiveWorkDays = Math.max(
+    1,
+    Number(rule.maxConsecutiveWorkDays ?? (rule.ruleType === "6X1_FLEX" ? 7 : workDaysInCycle)) ||
+      workDaysInCycle
+  );
+
+  let allowedRestDows = dedupeValidDows(rule.allowedRestDows);
+  if (allowedRestDows.length === 0 && rule.ruleType === "6X1_DOM") {
+    allowedRestDows = [0];
+  } else if (allowedRestDows.length === 0 && rule.ruleType === "5X2" && rule.fixedWeekdays !== false) {
+    allowedRestDows = [0, 6];
+  }
+
+  let fixedRestDows;
+  if (Array.isArray(rule.fixedRestDows)) {
+    fixedRestDows = dedupeValidDows(rule.fixedRestDows);
+  } else if (rule.ruleType === "6X1_DOM") {
+    fixedRestDows = [0];
+  } else if (
+    rule.ruleType === "5X2" &&
+    rule.fixedWeekdays !== false &&
+    allowedRestDows.length > 0 &&
+    allowedRestDows.length <= restDaysInCycle
+  ) {
+    fixedRestDows = [...allowedRestDows];
+  } else {
+    fixedRestDows = [];
+  }
+
+  const ruleType =
+    rule.ruleType ||
+    deriveRuleType({
+      workDaysInCycle,
+      restDaysInCycle,
+      allowedRestDows,
+      fixedRestDows,
+    });
+
+  return {
+    ...rule,
+    ruleType,
+    workDaysInCycle,
+    restDaysInCycle,
+    maxConsecutiveWorkDays,
+    allowedRestDows,
+    fixedRestDows,
+  };
+}
+
+export function deriveRuleType({
+  workDaysInCycle,
+  restDaysInCycle,
+  allowedRestDows = [],
+  fixedRestDows = [],
+}) {
+  const w = Number(workDaysInCycle) || 0;
+  const r = Number(restDaysInCycle) || 0;
+  const allowed = dedupeValidDows(allowedRestDows);
+  const fixed = dedupeValidDows(fixedRestDows);
+
+  if (w === 5 && r === 1 && allowed.length === 0 && fixed.length === 0) {
+    return "5X1";
+  }
+  if (w === 5 && r === 2) {
+    return "5X2";
+  }
+  if (w === 6 && r === 1) {
+    if (
+      allowed.length === 1 &&
+      allowed[0] === 0 &&
+      (fixed.length === 0 || (fixed.length === 1 && fixed[0] === 0))
+    ) {
+      return "6X1_DOM";
+    }
+    return "6X1_FLEX";
+  }
+  return "CUSTOM";
+}
+
+function buildDowCombinations(pool, chooseCount) {
+  if (chooseCount <= 0) return [[]];
+  if (pool.length < chooseCount) return [];
+  const results = [];
+  const helper = (startIdx, current) => {
+    if (current.length === chooseCount) {
+      results.push([...current]);
+      return;
+    }
+    for (let i = startIdx; i < pool.length; i++) {
+      current.push(pool[i]);
+      helper(i + 1, current);
+      current.pop();
+    }
+  };
+  helper(0, []);
+  return results;
+}
+
+export function validateScheduleRuleConfig(rule) {
+  const errors = [];
+  const w = Number(rule?.workDaysInCycle);
+  const r = Number(rule?.restDaysInCycle);
+  const maxC = Number(rule?.maxConsecutiveWorkDays);
+  const allowed = dedupeValidDows(rule?.allowedRestDows);
+  const fixed = dedupeValidDows(rule?.fixedRestDows);
+
+  if (!Number.isFinite(w) || w < 1) {
+    errors.push("Informe pelo menos 1 dia de trabalho.");
+  }
+  if (!Number.isFinite(r) || r < 1) {
+    errors.push("Informe pelo menos 1 dia de descanso.");
+  }
+  if (!Number.isFinite(maxC) || maxC < 1) {
+    errors.push("Informe o máximo de dias consecutivos de trabalho.");
+  }
+  if (Number.isFinite(w) && Number.isFinite(maxC) && maxC < w) {
+    errors.push(
+      `O máximo de dias consecutivos (${maxC}) não pode ser menor que os dias de trabalho (${w}).`
+    );
+  }
+  if (fixed.some((d) => !allowed.includes(d))) {
+    errors.push("Os dias de folga fixa devem fazer parte dos dias da semana permitidos para folga.");
+  }
+  if (Number.isFinite(r) && fixed.length > r) {
+    errors.push(
+      `A quantidade de dias de folga fixa (${fixed.length}) não pode ultrapassar os dias de descanso da regra (${r}).`
+    );
+  }
+  if (Number.isFinite(r) && allowed.length > 0 && allowed.length < r) {
+    errors.push(
+      `Selecione ao menos ${r} dia(s) permitido(s) para folga ou deixe sem dias fixos de semana para ciclo contínuo.`
+    );
+  }
+
+  if (
+    errors.length === 0 &&
+    w + r === 7 &&
+    allowed.length > 0 &&
+    allowed.length >= r &&
+    fixed.length <= r
+  ) {
+    const variablePool = allowed.filter((d) => !fixed.includes(d));
+    const combos = buildDowCombinations(variablePool, r - fixed.length);
+    const hasFeasibleWeek = combos.some((combo) => {
+      const restSet = new Set([...fixed, ...combo]);
+      let streak = 0;
+      let maxGap = 0;
+      for (let i = 0; i < 14; i++) {
+        if (restSet.has(i % 7)) {
+          streak = 0;
+        } else {
+          streak += 1;
+          if (streak > maxGap) maxGap = streak;
+        }
+      }
+      return maxGap <= maxC;
+    });
+    if (!hasFeasibleWeek) {
+      errors.push(
+        `Nenhuma combinação dos dias permitidos respeita o máximo de ${maxC} dias consecutivos de trabalho.`
+      );
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  };
+}
+
+function posMod(n, m) {
+  return ((n % m) + m) % m;
+}
+
+function solveConstrainedWeeklyRestDows({
+  employee,
+  weekStartISO,
+  currentDateISO,
+  firstMonthDateISO,
+  lastMonthDateISO,
+  consecutiveWorkAtCurrentDate,
+  allocations,
+  ruleAssignments,
+  rulesById,
+  unavailabilityEvents,
+  marketCalendarByDate,
+  existingManualEntriesByDate,
+  preserveManualOverrides,
+  priorEntriesByDate,
+  employeeRotationRank,
+  warnings,
+}) {
+  const weekDates = [0, 1, 2, 3, 4, 5, 6].map((d) => addDaysISO(weekStartISO, d));
+  const currentDow = getDayOfWeekISO(currentDateISO);
+
+  // Determina a regra efetiva predominante nesta semana (primeiro dia ativo a partir de currentDateISO)
+  let baseRuleRaw = null;
+  for (let d = currentDow; d < 7; d++) {
+    const dt = weekDates[d];
+    if (dt >= firstMonthDateISO && dt <= lastMonthDateISO) {
+      const candidateRule = getEffectiveRuleForDate({
+        employeeId: employee.id,
+        isoDate: dt,
+        allocations,
+        ruleAssignments,
+        rulesById,
+      });
+      if (candidateRule) {
+        baseRuleRaw = candidateRule;
+        break;
+      }
+    }
+  }
+  const baseRule = normalizeScheduleRule(baseRuleRaw);
+  if (!baseRule || baseRule.allowedRestDows.length === 0) {
+    return new Set();
+  }
+
+  const targetRestCount = baseRule.restDaysInCycle;
+  const maxConsec = baseRule.maxConsecutiveWorkDays;
+
+  const dayKinds = [];
+  const existingRestDows = [];
+  let closedFixedCount = 0;
+
+  for (let d = 0; d < 7; d++) {
+    const dt = weekDates[d];
+    const dayRule = normalizeScheduleRule(
+      getEffectiveRuleForDate({
+        employeeId: employee.id,
+        isoDate: dt,
+        allocations,
+        ruleAssignments,
+        rulesById,
+      }) || baseRule
+    );
+    const countsClosed = dayRule.closedMarketCountsAsRest !== false;
+
+    if (d < currentDow) {
+      const prev = priorEntriesByDate[dt];
+      const st = prev?.status;
+      if (st === "F" || st === "A") {
+        dayKinds[d] = "REST";
+        existingRestDows.push(d);
+      } else if (st === "FECHADO") {
+        dayKinds[d] = countsClosed ? "CLOSED_REST" : "NEUTRAL_PRESERVE";
+        if (countsClosed && baseRule.fixedRestDows.includes(d)) closedFixedCount += 1;
+      } else if (st === "T" || st === "MEIO_EXP") {
+        dayKinds[d] = "WORK";
+      } else if (st === "V" || st === "LM" || st === "INSS") {
+        const unavPrev = getUnavailabilityOnDate(unavailabilityEvents, employee.id, dt);
+        dayKinds[d] =
+          unavPrev?.cycleBehavior === "PRESERVE_PHASE" ? "NEUTRAL_PRESERVE" : "NEUTRAL_RESET";
+      } else {
+        dayKinds[d] = "NEUTRAL_RESET";
+      }
+      continue;
+    }
+
+    if (dt > lastMonthDateISO) {
+      dayKinds[d] = "OPEN_FUTURE";
+      continue;
+    }
+
+    const alloc = getActiveAllocationOnDate(allocations, employee.id, dt);
+    if (
+      (employee.hireDate && dt < employee.hireDate) ||
+      (employee.terminationDate && dt > employee.terminationDate) ||
+      (employee.noticePeriodEndDate && dt > employee.noticePeriodEndDate) ||
+      !alloc
+    ) {
+      dayKinds[d] = "NEUTRAL_RESET";
+      continue;
+    }
+
+    const unav = getUnavailabilityOnDate(unavailabilityEvents, employee.id, dt);
+    if (unav && unav.eventType !== "NOTICE_PERIOD") {
+      dayKinds[d] =
+        unav.cycleBehavior === "PRESERVE_PHASE" ? "NEUTRAL_PRESERVE" : "NEUTRAL_RESET";
+      continue;
+    }
+
+    const marketDay = marketCalendarByDate[dt];
+    if (marketDay && marketDay.openingMode === "CLOSED") {
+      dayKinds[d] = countsClosed ? "CLOSED_REST" : "NEUTRAL_PRESERVE";
+      if (countsClosed && dayRule.fixedRestDows.includes(d)) {
+        closedFixedCount += 1;
+      }
+      continue;
+    }
+
+    const manual = preserveManualOverrides ? existingManualEntriesByDate[dt] : null;
+    if (manual && manual.origin === "MANUAL_OVERRIDE") {
+      if (manual.status === "F" || manual.status === "A") {
+        dayKinds[d] = "REST";
+        existingRestDows.push(d);
+      } else if (manual.status === "T" || manual.status === "MEIO_EXP") {
+        dayKinds[d] = "WORK";
+      } else {
+        dayKinds[d] = "OPEN";
+      }
+      continue;
+    }
+
+    dayKinds[d] = "OPEN";
+  }
+
+  const needed = Math.max(0, targetRestCount - existingRestDows.length - closedFixedCount);
+  if (needed === 0) {
+    return new Set();
+  }
+
+  const openAllowedDows = [];
+  const mandatoryOpenFixed = [];
+
+  for (let d = currentDow; d < 7; d++) {
+    if (dayKinds[d] !== "OPEN") continue;
+    const dt = weekDates[d];
+    const dayRule = normalizeScheduleRule(
+      getEffectiveRuleForDate({
+        employeeId: employee.id,
+        isoDate: dt,
+        allocations,
+        ruleAssignments,
+        rulesById,
+      }) || baseRule
+    );
+    if (dayRule.allowedRestDows.includes(d)) {
+      openAllowedDows.push(d);
+      if (dayRule.fixedRestDows.includes(d)) {
+        mandatoryOpenFixed.push(d);
+      }
+    }
+  }
+
+  const openFutureAllowedDows = [];
+  for (let d = currentDow; d < 7; d++) {
+    if (dayKinds[d] === "OPEN_FUTURE" && baseRule.allowedRestDows.includes(d)) {
+      openFutureAllowedDows.push(d);
+    }
+  }
+
+  const allSimOpenAllowed = [...openAllowedDows, ...openFutureAllowedDows];
+  const simMandatoryFixed = [
+    ...mandatoryOpenFixed,
+    ...openFutureAllowedDows.filter((d) => baseRule.fixedRestDows.includes(d)),
+  ];
+
+  let candidateCombos = [];
+  if (simMandatoryFixed.length <= needed && allSimOpenAllowed.length >= needed) {
+    const varPool = allSimOpenAllowed.filter((d) => !simMandatoryFixed.includes(d));
+    const varNeeded = needed - simMandatoryFixed.length;
+    candidateCombos = buildDowCombinations(varPool, varNeeded).map((c) => [
+      ...simMandatoryFixed,
+      ...c,
+    ]);
+  } else if (openAllowedDows.length > 0 && openAllowedDows.length < needed) {
+    if (mandatoryOpenFixed.length > 0) {
+      return new Set(mandatoryOpenFixed.slice(0, needed));
+    }
+  }
+
+  const simulateWeekMaxConsec = (chosenDows) => {
+    const chosenSet = new Set(chosenDows);
+    let streak = consecutiveWorkAtCurrentDate;
+    for (let d = currentDow; d < 7; d++) {
+      const kind = dayKinds[d];
+      if (
+        kind === "REST" ||
+        kind === "CLOSED_REST" ||
+        kind === "NEUTRAL_RESET" ||
+        chosenSet.has(d)
+      ) {
+        streak = 0;
+      } else if (kind === "NEUTRAL_PRESERVE") {
+        // mantém streak
+      } else {
+        streak += 1;
+        if (streak > maxConsec) return { ok: false, endStreak: streak };
+      }
+    }
+    return { ok: true, endStreak: streak };
+  };
+
+  const nextWeekStart = addDaysISO(weekStartISO, 7);
+  const nextWeekRule = normalizeScheduleRule(
+    getEffectiveRuleForDate({
+      employeeId: employee.id,
+      isoDate: nextWeekStart,
+      allocations,
+      ruleAssignments,
+      rulesById,
+    }) || baseRule
+  );
+  const minDaysUntilNextFixed =
+    nextWeekRule.fixedRestDows.length > 0 ? Math.min(...nextWeekRule.fixedRestDows) : 0;
+
+  const validWithinWeek = [];
+  const validWithRollover = [];
+  for (const combo of candidateCombos) {
+    const sim = simulateWeekMaxConsec(combo);
+    if (!sim.ok) continue;
+    validWithinWeek.push(combo);
+    if (sim.endStreak + minDaysUntilNextFixed <= maxConsec) {
+      validWithRollover.push(combo);
+    }
+  }
+
+  const poolToPick = validWithRollover.length > 0 ? validWithRollover : validWithinWeek;
+  if (poolToPick.length > 0) {
+    const weekNumber = Math.floor(diffDaysISO(weekStartISO, "2026-01-04") / 7);
+    const picked = poolToPick[posMod((employeeRotationRank || 0) + weekNumber, poolToPick.length)];
+    return new Set(picked.filter((d) => openAllowedDows.includes(d)));
+  }
+
+  warnings.push({
+    type: "NO_VALID_REST_DISTRIBUTION",
+    employeeId: employee.id,
+    employeeName: employee.fullName,
+    workDate: weekStartISO,
+    ruleId: baseRule.id,
+    message: `Não foi possível distribuir ${targetRestCount} folga(s) nos dias permitidos respeitando o limite de ${maxConsec} dias consecutivos na semana de ${weekStartISO} para ${employee.fullName}.`,
+  });
+
+  if (mandatoryOpenFixed.length > 0) {
+    return new Set(mandatoryOpenFixed.slice(0, needed));
+  }
+  return new Set();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 5. MOTOR TEMPORAL DE GERAÇÃO DE ESCALA COM CONTINUIDADE ENTRE MESES
 // ─────────────────────────────────────────────────────────────────────────────
 export function generateEmployeeScheduleForMonth({
@@ -594,6 +1160,12 @@ export function generateEmployeeScheduleForMonth({
       ? targetRestInCycle - state.consecutiveRestDays
       : 0; // Usado em ciclos 5x2 rotativos
 
+  const firstMonthDateISO = dates[0] || `${yearMonth}-01`;
+  const lastMonthDateISO = dates[dates.length - 1] || `${yearMonth}-28`;
+  const previousEntriesByDate = Object.fromEntries(
+    (previousMonthEntries || []).map((e) => [e.workDate, e])
+  );
+  const solvedWeekRestDowsByWeekStart = {};
   const generatedEntries = [];
 
   for (let idx = 0; idx < dates.length; idx++) {
@@ -648,6 +1220,7 @@ export function generateEmployeeScheduleForMonth({
       ruleAssignments,
       rulesById,
     });
+    const normRule = normalizeScheduleRule(rule);
 
     // 1. Verifica eventos de indisponibilidade (Férias, Licença Maternidade, INSS)
     const unav = getUnavailabilityOnDate(unavailabilityEvents, employee.id, isoDate);
@@ -679,29 +1252,24 @@ export function generateEmployeeScheduleForMonth({
       continue;
     }
 
-    // 2. Verifica se existe lançamento manual preservado (Seção 10)
-    const manualExisting = existingManualEntriesByDate[isoDate];
-    if (preserveManualOverrides && manualExisting && manualExisting.origin === "MANUAL_OVERRIDE") {
-      const st = manualExisting.status;
-      if (st === "F" || st === "A" || st === "FECHADO") {
-        consecutiveWork = 0;
-        lastRestDate = isoDate;
-      } else if (st === "T" || st === "MEIO_EXP") {
-        consecutiveWork += 1;
-      }
-      generatedEntries.push({
-        ...manualExisting,
-        workPositionId: alloc.workPositionId,
-        unitId: alloc.unitId,
-        sectorId: alloc.sectorId,
-        ruleId: rule?.id || manualExisting.ruleId || null,
-      });
-      continue;
-    }
-
-    // 3. Verifica Calendário de Abertura do Mercado (Feriados, Domingos, Pontos Facultativos)
+    // 2. Verifica Calendário de Abertura do Mercado (Fechamento prevalece sobre lançamentos manuais e folgas)
     const marketDay = marketCalendarByDate[isoDate];
+    const manualExisting = existingManualEntriesByDate[isoDate];
     if (marketDay && marketDay.openingMode === "CLOSED") {
+      if (
+        preserveManualOverrides &&
+        manualExisting &&
+        manualExisting.origin === "MANUAL_OVERRIDE" &&
+        (manualExisting.status === "T" || manualExisting.status === "MEIO_EXP")
+      ) {
+        warnings.push({
+          type: "MANUAL_OVERRIDE_SUPERSEDED_BY_CLOSED_MARKET",
+          employeeId: employee.id,
+          employeeName: employee.fullName,
+          workDate: isoDate,
+          message: `Alteração manual de trabalho para ${employee.fullName} em ${isoDate} foi sobreposta porque a loja está configurada como FECHADA no Calendário Operacional.`,
+        });
+      }
       if (rule?.closedMarketCountsAsRest !== false) {
         consecutiveWork = 0;
         lastRestDate = isoDate;
@@ -720,57 +1288,111 @@ export function generateEmployeeScheduleForMonth({
       continue;
     }
 
+    // 3. Verifica se existe lançamento manual preservado (Seção 10)
+    if (preserveManualOverrides && manualExisting && manualExisting.origin === "MANUAL_OVERRIDE") {
+      const st = manualExisting.status;
+      if (st === "F" || st === "A" || st === "FECHADO") {
+        consecutiveWork = 0;
+        lastRestDate = isoDate;
+      } else if (st === "T" || st === "MEIO_EXP") {
+        consecutiveWork += 1;
+      }
+      generatedEntries.push({
+        ...manualExisting,
+        workPositionId: alloc.workPositionId,
+        unitId: alloc.unitId,
+        sectorId: alloc.sectorId,
+        ruleId: rule?.id || manualExisting.ruleId || null,
+      });
+      continue;
+    }
+
     // 4. Avaliação do Motor de Regras para o dia
     let isRestDay = false;
-    const ruleType = rule?.ruleType || "6X1_DOM";
+    const ruleType = normRule?.ruleType || rule?.ruleType || "6X1_DOM";
 
     if (ruleType === "5X1") {
-      const workLimit = rule?.workDaysInCycle || 5;
+      const workLimit = normRule?.workDaysInCycle || 5;
       if (employee.anchorLastRestDate && isoDate === employee.anchorLastRestDate) {
         isRestDay = true;
       } else if (consecutiveWork >= workLimit) {
         isRestDay = true;
       }
-    } else if (ruleType === "5X2") {
-      // Suporta 5x2 fixo (ex: Sáb e Dom -> allowedRestDows=[6, 0]) ou 5x2 rotativo contínuo
-      const allowedDows = rule?.allowedRestDows || [0, 6];
-      if (allowedDows.length >= 2 && rule?.fixedWeekdays !== false) {
-        isRestDay = allowedDows.includes(dow);
+    } else if (
+      ruleType === "5X2" ||
+      (ruleType === "CUSTOM" &&
+        normRule &&
+        normRule.workDaysInCycle + normRule.restDaysInCycle === 7 &&
+        normRule.restDaysInCycle >= 2 &&
+        normRule.allowedRestDows.length > 0)
+    ) {
+      const allowedDows = normRule?.allowedRestDows || [];
+      if (allowedDows.length > 0) {
+        const weekStartISO = addDaysISO(isoDate, -dow);
+        if (!solvedWeekRestDowsByWeekStart[weekStartISO]) {
+          const priorEntriesByDate = {
+            ...previousEntriesByDate,
+            ...Object.fromEntries(generatedEntries.map((e) => [e.workDate, e])),
+          };
+          solvedWeekRestDowsByWeekStart[weekStartISO] = solveConstrainedWeeklyRestDows({
+            employee,
+            weekStartISO,
+            currentDateISO: isoDate,
+            firstMonthDateISO,
+            lastMonthDateISO,
+            consecutiveWorkAtCurrentDate: consecutiveWork,
+            allocations,
+            ruleAssignments,
+            rulesById,
+            unavailabilityEvents,
+            marketCalendarByDate,
+            existingManualEntriesByDate,
+            preserveManualOverrides,
+            priorEntriesByDate,
+            employeeRotationRank,
+            warnings,
+          });
+        }
+        isRestDay = solvedWeekRestDowsByWeekStart[weekStartISO].has(dow);
       } else {
+        // 5x2 rotativo contínuo sem restrição de dia da semana
         if (restDaysRemainingInCycle > 0) {
           isRestDay = true;
           restDaysRemainingInCycle -= 1;
-        } else if (consecutiveWork >= (rule?.workDaysInCycle || 5)) {
+        } else if (consecutiveWork >= (normRule?.workDaysInCycle || 5)) {
           isRestDay = true;
-          restDaysRemainingInCycle = (rule?.restDaysInCycle || 2) - 1;
+          restDaysRemainingInCycle = (normRule?.restDaysInCycle || 2) - 1;
         }
       }
     } else if (ruleType === "6X1_DOM") {
       isRestDay = dow === 0;
     } else if (ruleType === "6X1_FLEX") {
-      const allowedDows = rule?.allowedRestDows?.length ? rule.allowedRestDows : [0, 1];
-      const maxConsec = rule?.maxConsecutiveWorkDays || 7;
-      const minWorkBeforeNextRest = Math.max(4, (rule?.workDaysInCycle || 6) - 1);
+      const allowedDows = normRule?.allowedRestDows?.length ? normRule.allowedRestDows : [0, 1];
+      const maxConsec = normRule?.maxConsecutiveWorkDays || 7;
+      const minWorkBeforeNextRest = Math.max(4, (normRule?.workDaysInCycle || 6) - 1);
 
       if (allowedDows.includes(dow)) {
         const chosenDow = allowedDows[flexWeekIndex % allowedDows.length];
         if (dow === chosenDow && (!lastRestDate || consecutiveWork >= minWorkBeforeNextRest)) {
           isRestDay = true;
         }
-        // Proteção contra transição Sáb -> Dom que excederia maxConsecutiveWorkDays:
-        // Se hoje é o primeiro dia da janela (ex: Sáb em Sáb/Dom) e não folgar hoje faria
-        // o colaborador atingir > maxConsec amanhã, antecipa a folga dentro da janela permitida.
         if (!isRestDay && consecutiveWork >= maxConsec) {
           isRestDay = true;
         }
-        // Quando passa pelo último dia da janela semanal (ex: SEG em DOM/SEG ou DOM em SAB/DOM), avança a semana
         if (dow === allowedDows[allowedDows.length - 1]) {
           flexWeekIndex += 1;
         }
       }
-      // Trava absoluta de segurança trabalhista: nunca ultrapassar maxConsecutiveWorkDays
       if (!isRestDay && consecutiveWork >= maxConsec) {
         isRestDay = true;
+      }
+    } else if (ruleType === "CUSTOM" && normRule) {
+      if (restDaysRemainingInCycle > 0) {
+        isRestDay = true;
+        restDaysRemainingInCycle -= 1;
+      } else if (consecutiveWork >= normRule.workDaysInCycle) {
+        isRestDay = true;
+        restDaysRemainingInCycle = Math.max(0, normRule.restDaysInCycle - 1);
       }
     }
 
@@ -975,8 +1597,64 @@ export function isCellModificationNoOp({
 }
 
 /**
+ * Valida uma edição manual de célula (edição direta, pincel ou troca bilateral)
+ * considerando fechamento de mercado e os dias da semana permitidos na regra vigente da data.
+ */
+export function validateManualCellEdit({
+  employee,
+  isoDate,
+  targetStatus,
+  allocations = [],
+  ruleAssignments = [],
+  rulesById = {},
+  marketCalendarByDate = {},
+}) {
+  if (!employee || !isoDate) {
+    return { allowed: false, code: "INVALID_PARAMS", message: "Dados inválidos para edição." };
+  }
+
+  const marketDay = marketCalendarByDate[isoDate];
+  if (
+    marketDay?.openingMode === "CLOSED" &&
+    ["T", "MEIO_EXP", "F", "A"].includes(targetStatus)
+  ) {
+    return {
+      allowed: false,
+      code: "CLOSED_MARKET_WORK_BLOCKED",
+      message: `Não é permitido alterar manualmente ${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}: o mercado está configurado como FECHADO no Calendário Operacional.`,
+    };
+  }
+
+  const effectiveRule = getEffectiveRuleForDate({
+    employeeId: employee.id,
+    isoDate,
+    allocations,
+    ruleAssignments,
+    rulesById,
+  });
+  const normRule = normalizeScheduleRule(effectiveRule);
+
+  if (targetStatus === "F" && normRule && normRule.allowedRestDows.length > 0) {
+    const dow = getDayOfWeekISO(isoDate);
+    if (!normRule.allowedRestDows.includes(dow)) {
+      const allowedNames = normRule.allowedRestDows
+        .map((d) => DIAS_SEMANA_CURTO[d])
+        .join(", ");
+      return {
+        allowed: false,
+        code: "DISALLOWED_REST_DAY",
+        rule: normRule,
+        message: `Folga ordinária (F) não permitida em ${DIAS_SEMANA_CURTO[dow]} (${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}) pela regra vigente "${normRule.code}". Dias permitidos: ${allowedNames}.`,
+      };
+    }
+  }
+
+  return { allowed: true, rule: normRule };
+}
+
+/**
  * Avalia e aplica uma troca bilateral de folga entre dois colaboradores, verificando
- * compatibilidade de turno (shiftPeriod) e calculando impacto no mês seguinte para ambos.
+ * compatibilidade de turno (shiftPeriod), regras vigentes e calculando impacto no mês seguinte.
  */
 export function evaluateBilateralRestSwap({
   targetEmp,
@@ -993,6 +1671,47 @@ export function evaluateBilateralRestSwap({
   unavailabilityEvents = [],
   marketCalendarByDate = {},
 }) {
+  const checkTargetWork = validateManualCellEdit({
+    employee: targetEmp,
+    isoDate: targetRestDate,
+    targetStatus: "T",
+    allocations,
+    ruleAssignments,
+    rulesById,
+    marketCalendarByDate,
+  });
+  const checkTargetRest = validateManualCellEdit({
+    employee: targetEmp,
+    isoDate: candidateRestDate,
+    targetStatus: "F",
+    allocations,
+    ruleAssignments,
+    rulesById,
+    marketCalendarByDate,
+  });
+  const checkCandRest = validateManualCellEdit({
+    employee: candidateEmp,
+    isoDate: targetRestDate,
+    targetStatus: "F",
+    allocations,
+    ruleAssignments,
+    rulesById,
+    marketCalendarByDate,
+  });
+  const checkCandWork = validateManualCellEdit({
+    employee: candidateEmp,
+    isoDate: candidateRestDate,
+    targetStatus: "T",
+    allocations,
+    ruleAssignments,
+    rulesById,
+    marketCalendarByDate,
+  });
+
+  const failedCheck = [checkTargetWork, checkTargetRest, checkCandRest, checkCandWork].find(
+    (c) => !c.allowed
+  );
+
   const allocA = getActiveAllocationOnDate(allocations, targetEmp?.id, targetRestDate);
   const allocB = getActiveAllocationOnDate(allocations, candidateEmp?.id, candidateRestDate);
   const shiftA = allocA ? shiftsById[allocA.workShiftId] : null;
@@ -1054,6 +1773,8 @@ export function evaluateBilateralRestSwap({
   }
 
   return {
+    allowed: !failedCheck,
+    blockedReason: failedCheck ? failedCheck.message : null,
     hasShiftPeriodMismatch,
     targetShiftPeriod: periodA,
     candidateShiftPeriod: periodB,
@@ -1128,6 +1849,7 @@ export function verifyScheduleConflicts({
   yearMonth,
   employees,
   allocations,
+  ruleAssignments = [],
   rulesById,
   shiftsById = {},
   sectorsById,
@@ -1152,7 +1874,7 @@ export function verifyScheduleConflicts({
     (prevByEmp[e.employeeId] = prevByEmp[e.employeeId] || []).push(e);
   });
 
-  // 1. Verifica restrições individuais (Lacunas vazias, Férias, Admissão/Demissão, Sobrecarga, Interjornada 11h, Almoço)
+  // 1. Verifica restrições individuais (Lacunas vazias, Férias, Admissão/Demissão, Sobrecarga, Interjornada 11h, Almoço, Regras Semanais)
   for (const emp of employees) {
     const empEntries = (entriesByEmp[emp.id] || []).sort((a, b) =>
       a.workDate.localeCompare(b.workDate)
@@ -1196,13 +1918,25 @@ export function verifyScheduleConflicts({
     let streak = 0;
     let streakStart = null;
     let prevEntry = null;
+    const weekBuckets = {};
 
     for (const entry of combined) {
       const alloc = getActiveAllocationOnDate(allocations, emp.id, entry.workDate);
-      const rule = alloc ? rulesById[alloc.scheduleRuleId] : null;
+      const rule = getEffectiveRuleForDate({
+        employeeId: emp.id,
+        isoDate: entry.workDate,
+        allocations,
+        ruleAssignments,
+        rulesById,
+      });
+      const normRule = normalizeScheduleRule(rule);
       const shift = alloc ? shiftsById[alloc.workShiftId] : null;
-      const maxAllowed = rule?.maxConsecutiveWorkDays || 7;
+      const maxAllowed = normRule?.maxConsecutiveWorkDays || 7;
       const inCurrentMonth = entry.workDate.startsWith(yearMonth);
+      const dow = getDayOfWeekISO(entry.workDate);
+      const weekStartISO = addDaysISO(entry.workDate, -dow);
+      if (!weekBuckets[weekStartISO]) weekBuckets[weekStartISO] = [];
+      weekBuckets[weekStartISO].push({ entry, normRule, inCurrentMonth });
 
       // Check 2: Trabalho antes da admissão ou após desligamento
       if (
@@ -1266,6 +2000,27 @@ export function verifyScheduleConflicts({
         });
       }
 
+      // Check 4.1: Folga ordinária em dia da semana não permitido pela regra vigente
+      if (
+        inCurrentMonth &&
+        entry.status === "F" &&
+        normRule &&
+        normRule.allowedRestDows.length > 0 &&
+        !normRule.allowedRestDows.includes(dow)
+      ) {
+        conflicts.push({
+          id: `conf_disallowed_rest_${emp.id}_${entry.workDate}`,
+          severity: "CRITICAL",
+          blocking: true,
+          type: "REST_ON_DISALLOWED_DAY",
+          workDate: entry.workDate,
+          employeeId: emp.id,
+          employeeName: emp.fullName,
+          sectorId: entry.sectorId,
+          message: `${emp.fullName} possui folga ordinária (F) em ${DIAS_SEMANA_CURTO[dow]} (${entry.workDate.slice(8, 10)}/${entry.workDate.slice(5, 7)}), dia não permitido na regra ${normRule.code}.`,
+        });
+      }
+
       // Check 5: Descanso Interjornada mínimo de 11h entre dois dias trabalhados consecutivos
       if (inCurrentMonth && prevEntry && diffDaysISO(entry.workDate, prevEntry.workDate) === 1) {
         const prevAlloc = getActiveAllocationOnDate(allocations, emp.id, prevEntry.workDate);
@@ -1307,19 +2062,18 @@ export function verifyScheduleConflicts({
             employeeId: emp.id,
             employeeName: emp.fullName,
             sectorId: entry.sectorId,
-            message: `Sobrecarga: ${emp.fullName} acumula ${streak} dias consecutivos de trabalho (início em ${streakStart}, limite da regra ${rule?.name || "padrão"}: ${maxAllowed} dias).`,
+            message: `Sobrecarga: ${emp.fullName} acumula ${streak} dias consecutivos de trabalho (início em ${streakStart}, limite da regra ${normRule?.name || "padrão"}: ${maxAllowed} dias).`,
           });
         }
 
         // Check 7: Domingo/Feriado trabalhado sem faixa de almoço quando exigido
-        const dow = getDayOfWeekISO(entry.workDate);
         const isSundayOrHoliday =
           dow === 0 ||
           (marketDay && ["HOLIDAY", "OPTIONAL_HOLIDAY", "SUNDAY"].includes(marketDay.dayType));
         if (
           inCurrentMonth &&
           isSundayOrHoliday &&
-          (rule?.requiresSundayLunchSlot !== false || marketDay?.requiresLunchScale) &&
+          (normRule?.requiresSundayLunchSlot !== false || marketDay?.requiresLunchScale) &&
           !entry.lunchSlot
         ) {
           conflicts.push({
@@ -1340,6 +2094,52 @@ export function verifyScheduleConflicts({
       }
 
       prevEntry = entry;
+    }
+
+    // Check 8: Quantidade semanal de folgas ordinárias para ciclos semanais com dias permitidos definidos
+    for (const [weekStartISO, items] of Object.entries(weekBuckets)) {
+      if (items.length !== 7) continue;
+      if (!items.some((x) => x.inCurrentMonth)) continue;
+      const hasNonOperational = items.some((x) =>
+        ["V", "LM", "INSS", "ADM", "DEM", "EMPTY"].includes(x.entry.status)
+      );
+      if (hasNonOperational) continue;
+
+      const firstRule = items[0].normRule;
+      if (!firstRule || firstRule.allowedRestDows.length === 0) continue;
+      if (firstRule.workDaysInCycle + firstRule.restDaysInCycle !== 7) continue;
+      const uniformRule = items.every((x) => x.normRule?.id === firstRule.id);
+      if (!uniformRule) continue;
+
+      const fCount = items.filter((x) => x.entry.status === "F").length;
+      const closedCount = items.filter((x) => x.entry.status === "FECHADO").length;
+      const targetRest = firstRule.restDaysInCycle;
+      const countsClosedAsRest = firstRule.closedMarketCountsAsRest !== false;
+
+      const hasMismatch =
+        closedCount === 0
+          ? fCount !== targetRest
+          : countsClosedAsRest
+            ? fCount > targetRest || fCount + closedCount < targetRest
+            : fCount !== targetRest;
+
+      if (hasMismatch) {
+        const anchorItem =
+          items.find((x) => x.inCurrentMonth && x.entry.status === "F") ||
+          items.find((x) => x.inCurrentMonth) ||
+          items[0];
+        conflicts.push({
+          id: `conf_week_rest_${emp.id}_${weekStartISO}`,
+          severity: "CRITICAL",
+          blocking: true,
+          type: "WEEKLY_REST_COUNT_MISMATCH",
+          workDate: anchorItem.entry.workDate,
+          employeeId: emp.id,
+          employeeName: emp.fullName,
+          sectorId: anchorItem.entry.sectorId,
+          message: `${emp.fullName} possui ${fCount} folga(s) ordinária(s) na semana de ${weekStartISO.slice(8, 10)}/${weekStartISO.slice(5, 7)} para a regra ${firstRule.code}, que prevê ${targetRest} dia(s) de descanso.`,
+        });
+      }
     }
   }
 
@@ -1441,6 +2241,7 @@ export function validateMonthlyScheduleChecklist({
   yearMonth,
   employees,
   allocations,
+  ruleAssignments = [],
   rulesById,
   shiftsById = {},
   sectorsById,
@@ -1455,6 +2256,7 @@ export function validateMonthlyScheduleChecklist({
     yearMonth,
     employees,
     allocations,
+    ruleAssignments,
     rulesById,
     shiftsById,
     sectorsById,

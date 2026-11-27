@@ -1,94 +1,32 @@
 // =============================================================================
-// JORNADAS CONTRATUAIS (CRUD COMPLETO + CÁLCULO ARITMÉTICO ATIVO DAS 8 COLUNAS),
-// MOTOR DE REGRAS EM 2 NÍVEIS (SIMPLES / AVANÇADO) E CALENDÁRIO OPERACIONAL (v8.0)
+// REGRAS DE ESCALA, JORNADAS CONTRATUAIS E CALENDÁRIO OPERACIONAL (v9.0)
 // =============================================================================
 
 import { useState, useMemo } from "react";
 import {
   ABERTURA_MERCADO_META,
+  DIAS_SEMANA_CURTO,
   FAIXAS_ALMOCO_DOMINGO,
   calculateShiftMetrics,
+  computeBaseWorkload,
+  deriveRuleType,
+  normalizeScheduleRule,
+  parseTimeToMinutes,
+  validateScheduleRuleConfig,
 } from "../domain/scheduleEngine.js";
 import { createUniaoModuleUi } from "../theme/uniaoTheme.js";
 
-const SIMPLE_RULE_TEMPLATES = [
-  {
-    id: "TPL_5X1",
-    label: "5x1 Contínuo (Trabalha 5 dias seguidos, folga 1)",
-    ruleType: "5X1",
-    workDays: 5,
-    restDays: 1,
-    maxConsec: 5,
-    dows: [],
-    fixedWeekdays: false,
-    preview: ["T", "T", "T", "T", "T", "F", "T", "T", "T", "T", "T", "F", "T", "T"],
-  },
-  {
-    id: "TPL_5X2_FIXED",
-    label: "5x2 Fim de Semana Fixo (Seg a Sex, folga Sáb e Dom)",
-    ruleType: "5X2",
-    workDays: 5,
-    restDays: 2,
-    maxConsec: 5,
-    dows: [6, 0],
-    fixedWeekdays: true,
-    preview: ["F", "T", "T", "T", "T", "T", "F", "F", "T", "T", "T", "T", "T", "F"],
-  },
-  {
-    id: "TPL_5X2_ROT",
-    label: "5x2 Corrido Rotativo (5 dias trab. / 2 dias de folga contínuos)",
-    ruleType: "5X2",
-    workDays: 5,
-    restDays: 2,
-    maxConsec: 5,
-    dows: [],
-    fixedWeekdays: false,
-    preview: ["T", "T", "T", "T", "T", "F", "F", "T", "T", "T", "T", "T", "F", "F"],
-  },
-  {
-    id: "TPL_6X1_DOM",
-    label: "6x1 Folga Fixa no Domingo (Seg a Sáb)",
-    ruleType: "6X1_DOM",
-    workDays: 6,
-    restDays: 1,
-    maxConsec: 6,
-    dows: [0],
-    fixedWeekdays: true,
-    preview: ["F", "T", "T", "T", "T", "T", "T", "F", "T", "T", "T", "T", "T", "T"],
-  },
-  {
-    id: "TPL_6X1_DOM_SEG",
-    label: "6x1 Revezamento Domingo / Segunda-feira",
-    ruleType: "6X1_FLEX",
-    workDays: 6,
-    restDays: 1,
-    maxConsec: 7,
-    dows: [0, 1],
-    fixedWeekdays: false,
-    preview: ["F", "T", "T", "T", "T", "T", "T", "T", "F", "T", "T", "T", "T", "T"],
-  },
-  {
-    id: "TPL_6X1_SAB_DOM",
-    label: "6x1 Revezamento Sábado / Domingo (FLV / Hortifruti)",
-    ruleType: "6X1_FLEX",
-    workDays: 6,
-    restDays: 1,
-    maxConsec: 7,
-    dows: [6, 0],
-    fixedWeekdays: false,
-    preview: ["T", "T", "T", "T", "T", "T", "F", "F", "T", "T", "T", "T", "T", "T"],
-  },
-  {
-    id: "TPL_6X1_SAB_DOM_SEG",
-    label: "6x1 Revezamento Sábado / Domingo / Segunda (Mercearia)",
-    ruleType: "6X1_FLEX",
-    workDays: 6,
-    restDays: 1,
-    maxConsec: 7,
-    dows: [6, 0, 1],
-    fixedWeekdays: false,
-    preview: ["T", "T", "T", "T", "T", "T", "F", "F", "T", "T", "T", "T", "T", "T"],
-  },
+const SHIFT_COLUMNS = [
+  { key: "shiftPeriod", num: null, label: "Turno", kind: "text", align: "center" },
+  { key: "name", num: null, label: "Descrição", kind: "text", align: "left" },
+  { key: "entryTime", num: "01", label: "Entrada", kind: "time", align: "center" },
+  { key: "breakStart", num: "02", label: "Início intervalo", kind: "time", align: "center" },
+  { key: "breakEnd", num: "03", label: "Fim intervalo", kind: "time", align: "center" },
+  { key: "exitBaseTime", num: "04", label: "Saída base", kind: "time", align: "center" },
+  { key: "baseWorkload", num: "05", label: "C.H. Base", kind: "duration", align: "center" },
+  { key: "extensionWorkload", num: "06", label: "Adic. / Compl.", kind: "duration", align: "center" },
+  { key: "effectiveExitTime", num: "07", label: "Saída real", kind: "time", align: "center" },
+  { key: "totalEffective", num: null, label: "Total efetivo", kind: "duration", align: "center" },
 ];
 
 export default function RulesShiftsAndCalendarModule({
@@ -98,14 +36,18 @@ export default function RulesShiftsAndCalendarModule({
   onMutateDb,
 }) {
   const [subTab, setSubTab] = useState(
-    initialTab === "calendar" ? "calendar" : "rules"
+    initialTab === "calendar"
+      ? "calendar"
+      : initialTab === "shifts"
+        ? "shifts"
+        : "rules"
   );
   const unitsById = Object.fromEntries((db.units || []).map((u) => [u.id, u]));
   const selectedUnitLabel =
     unitsById[selectedUnitId]?.name || unitsById[selectedUnitId]?.code || selectedUnitId || "Unidade";
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 1. ESTADO DO CALENDÁRIO OPERACIONAL DO MERCADO (Com Edição e Filtro de Loja)
+  // 1. ESTADO DO CALENDÁRIO OPERACIONAL
   // ───────────────────────────────────────────────────────────────────────────
   const [editingCalId, setEditingCalId] = useState(null);
   const [calDate, setCalDate] = useState("2026-11-15");
@@ -116,30 +58,28 @@ export default function RulesShiftsAndCalendarModule({
   const [calLunch, setCalLunch] = useState(true);
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 2. ESTADO DO MOTOR DE REGRAS (Modo Simples vs Modo Avançado + Edição)
+  // 2. ESTADO DAS REGRAS DE ESCALA (FORMULÁRIO ÚNICO + VIGÊNCIAS)
   // ───────────────────────────────────────────────────────────────────────────
-  const [ruleConfigMode, setRuleConfigMode] = useState("simple"); // 'simple' | 'advanced'
   const [editingRuleId, setEditingRuleId] = useState(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("TPL_5X2_FIXED");
   const [ruleCode, setRuleCode] = useState("");
   const [ruleName, setRuleName] = useState("");
-  const [ruleType, setRuleType] = useState("5X2");
   const [ruleWorkDays, setRuleWorkDays] = useState(5);
   const [ruleRestDays, setRuleRestDays] = useState(2);
   const [ruleMaxConsec, setRuleMaxConsec] = useState(5);
-  const [ruleDows, setRuleDows] = useState([6, 0]);
-  const [ruleFixedWeekdays, setRuleFixedWeekdays] = useState(true);
-  const [ruleSundayLunch, setRuleSundayLunch] = useState(true);
-  const [ruleClosedCountsRest, setRuleClosedCountsRest] = useState(false);
+  const [ruleAllowedDows, setRuleAllowedDows] = useState([0, 6]);
+  const [ruleFixedDows, setRuleFixedDows] = useState([0, 6]);
+  const [ruleSundayLunch, setRuleSundayLunch] = useState(false);
+  const [ruleClosedCountsRest, setRuleClosedCountsRest] = useState(true);
+  const [ruleFormErrors, setRuleFormErrors] = useState([]);
 
-  // Mudança de Regra com Vigência Temporal
+  // Alteração de regra por colaborador e vigência
   const [ovEmpId, setOvEmpId] = useState(db.employees[0]?.id || "");
-  const [ovRuleId, setOvRuleId] = useState("RULE_5X2");
+  const [ovRuleId, setOvRuleId] = useState(db.scheduleRules[0]?.id || "RULE_5X2");
   const [ovFromDate, setOvFromDate] = useState("2026-11-16");
   const [ovToDate, setOvToDate] = useState("");
 
   // ───────────────────────────────────────────────────────────────────────────
-  // 3. ESTADO DE JORNADAS CONTRATUAIS (CRUD COMPLETO DAS 8 COLUNAS DE HORÁRIO)
+  // 3. ESTADO DE JORNADAS CONTRATUAIS (7 COLUNAS + ORDENAÇÃO)
   // ───────────────────────────────────────────────────────────────────────────
   const [editingShiftId, setEditingShiftId] = useState(null);
   const [shiftCode, setShiftCode] = useState("");
@@ -149,12 +89,17 @@ export default function RulesShiftsAndCalendarModule({
   const [breakStart, setBreakStart] = useState("11:30");
   const [breakEnd, setBreakEnd] = useState("13:00");
   const [exitBaseTime, setExitBaseTime] = useState("15:50");
-  const [baseWorkload, setBaseWorkload] = useState("07:20");
   const [extensionWorkload, setExtensionWorkload] = useState("01:40");
   const [effectiveExitTime, setEffectiveExitTime] = useState("17:30");
-  const [contractDailyWorkload, setContractDailyWorkload] = useState("07:20");
+  const [shiftSort, setShiftSort] = useState({ key: "shiftPeriod", direction: "asc" });
 
-  // Cálculo aritmético em tempo real das 8 colunas do formulário de jornada
+  // C.H. Base calculada reativamente: (Saída base - Entrada) - (Fim do intervalo - Início do intervalo)
+  const computedBase = useMemo(
+    () => computeBaseWorkload(entryTime, breakStart, breakEnd, exitBaseTime),
+    [entryTime, breakStart, breakEnd, exitBaseTime]
+  );
+  const baseWorkload = computedBase.formatted;
+
   const liveShiftMetrics = useMemo(
     () =>
       calculateShiftMetrics({
@@ -165,18 +110,9 @@ export default function RulesShiftsAndCalendarModule({
         baseWorkload,
         extensionWorkload,
         effectiveExitTime,
-        contractDailyWorkload,
+        contractDailyWorkload: baseWorkload,
       }),
-    [
-      entryTime,
-      breakStart,
-      breakEnd,
-      exitBaseTime,
-      baseWorkload,
-      extensionWorkload,
-      effectiveExitTime,
-      contractDailyWorkload,
-    ]
+    [entryTime, breakStart, breakEnd, exitBaseTime, baseWorkload, extensionWorkload, effectiveExitTime]
   );
 
   const unitCalendarDays = useMemo(
@@ -187,11 +123,37 @@ export default function RulesShiftsAndCalendarModule({
     [db.marketCalendarDays, selectedUnitId]
   );
 
-  // Auto-preencher campos de carga horária a partir dos horários digitados
-  const handleAutoCalculateShiftWorkloads = () => {
-    setBaseWorkload(liveShiftMetrics.derivedBaseFormatted);
-    setExtensionWorkload(liveShiftMetrics.derivedExtensionFormatted);
-    setContractDailyWorkload(liveShiftMetrics.derivedBaseFormatted);
+  const sortedWorkShifts = useMemo(() => {
+    const colMeta = SHIFT_COLUMNS.find((c) => c.key === shiftSort.key);
+    const dir = shiftSort.direction === "desc" ? -1 : 1;
+    return [...(db.workShifts || [])].sort((a, b) => {
+      if (!colMeta) return 0;
+      if (colMeta.kind === "text") {
+        const va = String(a[colMeta.key] || "");
+        const vb = String(b[colMeta.key] || "");
+        return dir * va.localeCompare(vb, "pt-BR", { sensitivity: "base" });
+      }
+      const getVal = (sh) => {
+        if (colMeta.key === "baseWorkload") {
+          return sh.baseWorkload
+            ? parseTimeToMinutes(sh.baseWorkload)
+            : computeBaseWorkload(sh.entryTime, sh.breakStart, sh.breakEnd, sh.exitBaseTime).minutes;
+        }
+        if (colMeta.key === "totalEffective") {
+          return calculateShiftMetrics(sh).derivedTotalEffectiveMinutes;
+        }
+        return parseTimeToMinutes(sh[colMeta.key] || "00:00");
+      };
+      return dir * (getVal(a) - getVal(b));
+    });
+  }, [db.workShifts, shiftSort]);
+
+  const handleToggleShiftSort = (key) => {
+    setShiftSort((prev) =>
+      prev.key === key
+        ? { key, direction: prev.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: "asc" }
+    );
   };
 
   // Salvar Jornada Contratual (Criar ou Editar)
@@ -227,7 +189,7 @@ export default function RulesShiftsAndCalendarModule({
               baseWorkload,
               extensionWorkload,
               effectiveExitTime,
-              contractDailyWorkload,
+              contractDailyWorkload: baseWorkload,
             };
           }
         } else {
@@ -243,7 +205,7 @@ export default function RulesShiftsAndCalendarModule({
             baseWorkload,
             extensionWorkload,
             effectiveExitTime,
-            contractDailyWorkload,
+            contractDailyWorkload: baseWorkload,
             weeklyHours: 44,
             active: true,
           });
@@ -265,10 +227,8 @@ export default function RulesShiftsAndCalendarModule({
     setBreakStart(sh.breakStart || "11:30");
     setBreakEnd(sh.breakEnd || "13:00");
     setExitBaseTime(sh.exitBaseTime || "15:50");
-    setBaseWorkload(sh.baseWorkload || "07:20");
     setExtensionWorkload(sh.extensionWorkload || "01:40");
     setEffectiveExitTime(sh.effectiveExitTime || "17:30");
-    setContractDailyWorkload(sh.contractDailyWorkload || "07:20");
   };
 
   const handleToggleDeactivateShift = (sh) => {
@@ -339,9 +299,7 @@ export default function RulesShiftsAndCalendarModule({
       },
     });
     if (editingRuleId === r.id) {
-      setEditingRuleId(null);
-      setRuleCode("");
-      setRuleName("");
+      resetRuleForm();
     }
   };
 
@@ -361,7 +319,7 @@ export default function RulesShiftsAndCalendarModule({
     });
   };
 
-  // Salvar dia no Calendário Operacional do Mercado
+  // Salvar dia no Calendário Operacional
   const handleSaveCalendarDay = (e) => {
     e.preventDefault();
     if (!calDate) return;
@@ -388,7 +346,7 @@ export default function RulesShiftsAndCalendarModule({
       entityType: "MARKET_CALENDAR_DAY",
       entityId: newEntry.id,
       unitId: selectedUnitId,
-      summary: `Data ${calDate} (${selectedUnitId}) salva como ${calType} — "${ABERTURA_MERCADO_META[calMode]?.label}"${hasExistingSchedule ? ` (Competência ${yearMonthAffected} possui escala ativa: use 'Gerar c/ Continuidade' para aplicar nas células automáticas)` : ""}.`,
+      summary: `Data ${calDate} (${selectedUnitId}) salva como ${calType} — "${ABERTURA_MERCADO_META[calMode]?.label}"${hasExistingSchedule ? ` (Competência ${yearMonthAffected} possui escala ativa: use 'Gerar com continuidade' para aplicar nas células automáticas)` : ""}.`,
       updater: (draft) => {
         draft.marketCalendarDays = draft.marketCalendarDays.filter(
           (c) =>
@@ -418,46 +376,106 @@ export default function RulesShiftsAndCalendarModule({
     });
   };
 
-  // Aplicar template no Modo Simples de Regras
-  const handleSelectRuleTemplate = (tplId) => {
-    setSelectedTemplateId(tplId);
-    const tpl = SIMPLE_RULE_TEMPLATES.find((t) => t.id === tplId);
-    if (!tpl) return;
-    setRuleType(tpl.ruleType);
-    setRuleWorkDays(tpl.workDays);
-    setRuleRestDays(tpl.restDays);
-    setRuleMaxConsec(tpl.maxConsec);
-    setRuleDows(tpl.dows);
-    setRuleFixedWeekdays(tpl.fixedWeekdays);
-    if (!editingRuleId) {
-      setRuleCode(tpl.id.replace("TPL_", ""));
-      setRuleName(tpl.label);
-    }
+  const resetRuleForm = () => {
+    setEditingRuleId(null);
+    setRuleCode("");
+    setRuleName("");
+    setRuleWorkDays(5);
+    setRuleRestDays(2);
+    setRuleMaxConsec(5);
+    setRuleAllowedDows([0, 6]);
+    setRuleFixedDows([0, 6]);
+    setRuleSundayLunch(false);
+    setRuleClosedCountsRest(true);
+    setRuleFormErrors([]);
   };
 
-  // Criar ou Editar Regra de Escala
+  const toggleAllowedDow = (dowNum) => {
+    setRuleFormErrors([]);
+    setRuleAllowedDows((prev) => {
+      if (prev.includes(dowNum)) {
+        setRuleFixedDows((fPrev) => fPrev.filter((d) => d !== dowNum));
+        return prev.filter((d) => d !== dowNum);
+      }
+      return [...prev, dowNum];
+    });
+  };
+
+  const toggleFixedDow = (dowNum) => {
+    setRuleFormErrors([]);
+    if (!ruleAllowedDows.includes(dowNum)) return;
+    setRuleFixedDows((prev) =>
+      prev.includes(dowNum) ? prev.filter((d) => d !== dowNum) : [...prev, dowNum]
+    );
+  };
+
+  // Criar ou Editar Regra de Escala (formulário único)
   const handleSaveRule = (e) => {
     e.preventDefault();
-    if (!ruleCode.trim() || !ruleName.trim()) return;
+    const cleanCode = ruleCode.trim().toUpperCase().replace(/\s+/g, " ");
+    const cleanName = ruleName.trim();
+    const workDays = Number(ruleWorkDays);
+    const restDays = Number(ruleRestDays);
+    const maxConsec = Number(ruleMaxConsec);
+
+    const validation = validateScheduleRuleConfig({
+      workDaysInCycle: workDays,
+      restDaysInCycle: restDays,
+      maxConsecutiveWorkDays: maxConsec,
+      allowedRestDows: ruleAllowedDows,
+      fixedRestDows: ruleFixedDows,
+    });
+
+    const errors = [...validation.errors];
+    if (!cleanCode) errors.unshift("Informe o código da regra.");
+    if (!cleanName) errors.unshift("Informe o nome da regra.");
+
+    const duplicateCode = (db.scheduleRules || []).some(
+      (r) =>
+        r.id !== editingRuleId &&
+        String(r.code || "").trim().toUpperCase().replace(/\s+/g, " ") === cleanCode
+    );
+    if (duplicateCode) {
+      errors.push(`Já existe uma regra cadastrada com o código "${cleanCode}".`);
+    }
+
+    if (errors.length > 0) {
+      setRuleFormErrors(errors);
+      return;
+    }
+    setRuleFormErrors([]);
+
+    const derivedType = deriveRuleType({
+      workDaysInCycle: workDays,
+      restDaysInCycle: restDays,
+      allowedRestDows: ruleAllowedDows,
+      fixedRestDows: ruleFixedDows,
+    });
+
+    const isFullyFixedWeek =
+      ruleFixedDows.length > 0 &&
+      ruleFixedDows.length === restDays &&
+      ruleAllowedDows.length === ruleFixedDows.length;
 
     onMutateDb({
       permission: "MANAGE_RULES_SHIFTS",
       module: "MOTOR_DE_REGRAS",
       action: editingRuleId ? "EDITAR_REGRA_ESCALA" : "CRIAR_REGRA_ESCALA",
       entityType: "SCHEDULE_RULE",
-      entityId: editingRuleId || ruleCode.trim().toUpperCase(),
-      summary: `${editingRuleId ? "Atualizada" : "Criada"} regra de escala "${ruleCode.trim().toUpperCase()} — ${ruleName.trim()}" (${ruleType}, Ciclo ${ruleWorkDays}x${ruleRestDays}).`,
+      entityId: editingRuleId || cleanCode,
+      summary: `${editingRuleId ? "Atualizada" : "Criada"} regra de escala "${cleanCode} — ${cleanName}" (${workDays}x${restDays}).`,
       updater: (draft) => {
         const payload = {
-          code: ruleCode.trim().toUpperCase(),
-          name: ruleName.trim(),
-          description: `Ciclo ${ruleWorkDays}x${ruleRestDays} (${ruleType}) — máx. ${ruleMaxConsec} dias seguidos`,
-          ruleType,
-          workDaysInCycle: Number(ruleWorkDays) || 5,
-          restDaysInCycle: Number(ruleRestDays) || 1,
-          allowedRestDows: ruleDows,
-          fixedWeekdays: Boolean(ruleFixedWeekdays),
-          maxConsecutiveWorkDays: Number(ruleMaxConsec) || 6,
+          code: cleanCode,
+          name: cleanName,
+          description: `Ciclo ${workDays}x${restDays} — máx. ${maxConsec} dias consecutivos`,
+          ruleType: derivedType,
+          workDaysInCycle: workDays,
+          restDaysInCycle: restDays,
+          allowedRestDows: [...ruleAllowedDows],
+          fixedRestDows: [...ruleFixedDows],
+          fixedWeekdays: isFullyFixedWeek,
+          maxConsecutiveWorkDays: maxConsec,
           requiresSundayLunchSlot: Boolean(ruleSundayLunch),
           closedMarketCountsAsRest: Boolean(ruleClosedCountsRest),
           effectiveFrom: "2026-01-01",
@@ -473,32 +491,31 @@ export default function RulesShiftsAndCalendarModule({
           }
         } else {
           draft.scheduleRules.push({
-            id: `RULE_${ruleCode.trim().toUpperCase().replace(/\W+/g, "_")}_${Date.now()}`,
+            id: `RULE_${cleanCode.replace(/\W+/g, "_")}_${Date.now()}`,
             ...payload,
           });
         }
       },
     });
-    setEditingRuleId(null);
-    setRuleCode("");
-    setRuleName("");
+    resetRuleForm();
   };
 
   const loadRuleIntoForm = (r, asDuplicate = false) => {
+    const norm = normalizeScheduleRule(r);
     setEditingRuleId(asDuplicate ? null : r.id);
     setRuleCode(asDuplicate ? `${r.code}_COPIA` : r.code);
     setRuleName(asDuplicate ? `${r.name} (Cópia)` : r.name);
-    setRuleType(r.ruleType || "6X1_DOM");
-    setRuleWorkDays(r.workDaysInCycle || 6);
-    setRuleRestDays(r.restDaysInCycle || 1);
-    setRuleMaxConsec(r.maxConsecutiveWorkDays || 6);
-    setRuleDows(r.allowedRestDows || []);
-    setRuleFixedWeekdays(Boolean(r.fixedWeekdays));
+    setRuleWorkDays(norm?.workDaysInCycle || 5);
+    setRuleRestDays(norm?.restDaysInCycle || 2);
+    setRuleMaxConsec(norm?.maxConsecutiveWorkDays || 5);
+    setRuleAllowedDows(norm?.allowedRestDows || []);
+    setRuleFixedDows(norm?.fixedRestDows || []);
     setRuleSundayLunch(r.requiresSundayLunchSlot !== false);
-    setRuleClosedCountsRest(Boolean(r.closedMarketCountsAsRest));
+    setRuleClosedCountsRest(r.closedMarketCountsAsRest !== false);
+    setRuleFormErrors([]);
   };
 
-  // Atribuir mudança de regra com data de vigência a um colaborador
+  // Atribuir alteração de regra com data de vigência a um colaborador
   const handleAddRuleAssignment = (e) => {
     e.preventDefault();
     if (!ovEmpId || !ovRuleId || !ovFromDate) return;
@@ -527,32 +544,34 @@ export default function RulesShiftsAndCalendarModule({
     });
   };
 
-  const toggleDow = (dowNum) => {
-    setRuleDows((prev) =>
-      prev.includes(dowNum) ? prev.filter((d) => d !== dowNum) : [...prev, dowNum]
-    );
-  };
+  const formatDowsList = (dows) =>
+    dows && dows.length > 0
+      ? dows.map((d) => DIAS_SEMANA_CURTO[d]).join(" / ")
+      : "—";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button
+          type="button"
           onClick={() => setSubTab("rules")}
           style={subTab === "rules" ? ui.subTabActive : ui.subTab}
         >
-          ⚙️ Regras de Escala (Modo Simples / Avançado & Vigências)
+          Regras de escala
         </button>
         <button
+          type="button"
           onClick={() => setSubTab("shifts")}
           style={subTab === "shifts" ? ui.subTabActive : ui.subTab}
         >
-          ⏱️ Jornadas Contratuais (CRUD 8 Colunas + Cálculo Aritmético Ativo)
+          Jornadas contratuais
         </button>
         <button
+          type="button"
           onClick={() => setSubTab("calendar")}
           style={subTab === "calendar" ? ui.subTabActive : ui.subTab}
         >
-          🗓️ Calendário Operacional — {selectedUnitLabel} ({unitCalendarDays.length} datas)
+          Calendário operacional — {selectedUnitLabel} ({unitCalendarDays.length})
         </button>
       </div>
 
@@ -561,23 +580,23 @@ export default function RulesShiftsAndCalendarModule({
           <div style={ui.card}>
             <div style={ui.cardTitle}>
               {editingCalId
-                ? `✏️ Editar Data do Calendário Operacional (${selectedUnitLabel})`
-                : `🏪 Configurar Dias de Abertura do Mercado — Unidade ${selectedUnitLabel}`}
+                ? `Editar data do calendário operacional (${selectedUnitLabel})`
+                : `Calendário operacional — ${selectedUnitLabel}`}
             </div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
-              Define como a loja <strong>{selectedUnitLabel}</strong> opera em datas específicas: <strong>Dia Inteiro (Normal)</strong>, <strong>Meio Dia (Meio Expediente)</strong> ou <strong>Fechado (Não Abre)</strong>.
+              Define o funcionamento da unidade <strong>{selectedUnitLabel}</strong> em feriados e datas especiais.
             </div>
 
             <form
               onSubmit={handleSaveCalendarDay}
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))",
-                gap: 10,
+                gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+                gap: 12,
                 alignItems: "end",
               }}
             >
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={ui.label}>Data</label>
                 <input
                   type="date"
@@ -587,8 +606,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>Classificação do Dia</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Classificação do dia</label>
                 <select
                   value={calType}
                   onChange={(e) => setCalType(e.target.value)}
@@ -601,21 +620,21 @@ export default function RulesShiftsAndCalendarModule({
                   <option value="PAYDAY">Dia de Pagamento Salarial</option>
                 </select>
               </div>
-              <div>
-                <label style={ui.label}>Regime de Abertura do Mercado</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Regime de abertura</label>
                 <select
                   value={calMode}
                   onChange={(e) => setCalMode(e.target.value)}
                   style={ui.select}
                 >
-                  <option value="FULL_DAY">🟢 Abre Dia Inteiro (Horário Normal)</option>
-                  <option value="HALF_DAY">🟡 Abre Meio Dia (Meio Expediente)</option>
-                  <option value="CLOSED">🔴 Não Abre (Mercado Fechado)</option>
+                  <option value="FULL_DAY">Dia Inteiro (Normal)</option>
+                  <option value="HALF_DAY">Meio Dia (Meio Expediente)</option>
+                  <option value="CLOSED">Fechado (Não Abre)</option>
                 </select>
               </div>
               {calMode === "HALF_DAY" && (
-                <div>
-                  <label style={ui.label}>Fechamento Meio Dia</label>
+                <div style={{ minWidth: 0 }}>
+                  <label style={ui.label}>Fechamento meio dia</label>
                   <input
                     type="time"
                     value={calHalfTime}
@@ -624,8 +643,8 @@ export default function RulesShiftsAndCalendarModule({
                   />
                 </div>
               )}
-              <div>
-                <label style={ui.label}>Descrição / Feriado</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Descrição</label>
                 <input
                   type="text"
                   placeholder="Ex: Finados / Natal / Aniversário da Cidade"
@@ -634,415 +653,437 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }}>
-                <input
-                  type="checkbox"
-                  id="chk_lunch_cal"
-                  checked={calLunch}
-                  disabled={calMode === "CLOSED"}
-                  onChange={(e) => setCalLunch(e.target.checked)}
-                />
-                <label htmlFor="chk_lunch_cal" style={{ fontSize: 12, color: "#334155" }}>
-                  Exigir Escala de Almoço (1 a 4)
+
+              <div
+                style={{
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  paddingTop: 4,
+                }}
+              >
+                <label
+                  htmlFor="chk_lunch_cal"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    fontSize: 12.5,
+                    color: "#334155",
+                    cursor: calMode === "CLOSED" ? "not-allowed" : "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    id="chk_lunch_cal"
+                    checked={calLunch}
+                    disabled={calMode === "CLOSED"}
+                    onChange={(e) => setCalLunch(e.target.checked)}
+                  />
+                  <span>Exigir escala de almoço (N 01 a N 04)</span>
                 </label>
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button type="submit" style={ui.btnPrimary}>
-                  {editingCalId ? "Salvar Alteração" : "Salvar no Calendário"}
-                </button>
-                {editingCalId && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingCalId(null);
-                      setCalDesc("");
-                    }}
-                    style={ui.btnSmall}
-                  >
-                    Cancelar
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="submit" style={ui.btnPrimary}>
+                    {editingCalId ? "Salvar alteração" : "Salvar no calendário"}
                   </button>
-                )}
+                  {editingCalId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCalId(null);
+                        setCalDesc("");
+                      }}
+                      style={ui.btnSecondary}
+                    >
+                      Cancelar
+                    </button>
+                  )}
+                </div>
               </div>
             </form>
           </div>
 
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              Calendário Operacional — {selectedUnitLabel} ({unitCalendarDays.length} datas configuradas)
+              Calendário operacional — {selectedUnitLabel} ({unitCalendarDays.length} datas)
             </div>
-            <table style={ui.table}>
-              <thead>
-                <tr style={{ background: "var(--uniao-table-header-bg, #2B5690)", color: "#fff" }}>
-                  <th style={ui.th}>Data</th>
-                  <th style={ui.th}>Unidade</th>
-                  <th style={ui.th}>Tipo</th>
-                  <th style={ui.th}>Regime de Abertura</th>
-                  <th style={{ ...ui.th, textAlign: "left" }}>Descrição</th>
-                  <th style={ui.th}>Escala Almoço (1..4)</th>
-                  <th style={ui.th}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {unitCalendarDays.map((c) => {
-                  const meta = ABERTURA_MERCADO_META[c.openingMode] || ABERTURA_MERCADO_META.FULL_DAY;
-                  return (
-                    <tr key={c.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                      <td style={{ ...ui.td, textAlign: "center", fontWeight: 700 }}>
-                        {c.calendarDate.split("-").reverse().join("/")}
-                      </td>
-                      <td style={{ ...ui.td, textAlign: "center", fontSize: 11, fontWeight: 700 }}>
-                        {unitsById[c.unitId]?.name || unitsById[c.unitId]?.code || c.unitId}
-                      </td>
-                      <td style={{ ...ui.td, textAlign: "center", fontSize: 11 }}>{c.dayType}</td>
-                      <td style={{ ...ui.td, textAlign: "center" }}>
-                        <span
-                          style={{
-                            background: meta.bg,
-                            color: meta.cor,
-                            padding: "3px 8px",
-                            borderRadius: 999,
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {meta.label}
-                          {c.openingMode === "HALF_DAY" ? ` (até ${c.halfDayClosingTime})` : ""}
-                        </span>
-                      </td>
-                      <td style={{ ...ui.td, fontWeight: 600 }}>{c.description}</td>
-                      <td style={{ ...ui.td, textAlign: "center" }}>
-                        {c.requiresLunchScale ? "Sim (N 01 a N 04)" : "Não"}
-                      </td>
-                      <td style={{ ...ui.td, textAlign: "center" }}>
-                        <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-                          <button
-                            onClick={() => {
-                              setEditingCalId(c.id);
-                              setCalDate(c.calendarDate);
-                              setCalType(c.dayType);
-                              setCalMode(c.openingMode);
-                              setCalDesc(c.description);
-                              setCalHalfTime(c.halfDayClosingTime || "13:00");
-                              setCalLunch(Boolean(c.requiresLunchScale));
+            <div style={{ overflowX: "auto" }}>
+              <table style={ui.table}>
+                <thead>
+                  <tr style={{ background: "var(--uniao-table-header-bg, #F1F5F9)" }}>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Data</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Unidade</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Tipo</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Regime de abertura</th>
+                    <th style={{ ...ui.th, textAlign: "left" }}>Descrição</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Escala almoço</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unitCalendarDays.map((c) => {
+                    const meta = ABERTURA_MERCADO_META[c.openingMode] || ABERTURA_MERCADO_META.FULL_DAY;
+                    return (
+                      <tr key={c.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {c.calendarDate.split("-").reverse().join("/")}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", fontSize: 11.5, fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {unitsById[c.unitId]?.name || unitsById[c.unitId]?.code || c.unitId}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", fontSize: 11.5, whiteSpace: "nowrap" }}>{c.dayType}</td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              background: meta.bg,
+                              color: meta.cor,
+                              padding: "3px 8px",
+                              borderRadius: 999,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              whiteSpace: "nowrap",
                             }}
-                            style={ui.btnSmall}
                           >
-                            ✏️ Editar
-                          </button>
-                          <button
-                            onClick={() => handleRemoveCalendarDay(c.id)}
-                            style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
-                          >
-                            🗑️ Excluir
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {meta.label}
+                            {c.openingMode === "HALF_DAY" ? ` (até ${c.halfDayClosingTime})` : ""}
+                          </span>
+                        </td>
+                        <td style={{ ...ui.td, fontWeight: 600 }}>{c.description}</td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          {c.requiresLunchScale ? "Sim (N 01 a N 04)" : "Não"}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "inline-flex", gap: 6, justifyContent: "center", flexWrap: "nowrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingCalId(c.id);
+                                setCalDate(c.calendarDate);
+                                setCalType(c.dayType);
+                                setCalMode(c.openingMode);
+                                setCalDesc(c.description);
+                                setCalHalfTime(c.halfDayClosingTime || "13:00");
+                                setCalLunch(Boolean(c.requiresLunchScale));
+                              }}
+                              style={ui.btnSmall}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveCalendarDay(c.id)}
+                              style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
+                            >
+                              Excluir
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
       {subTab === "rules" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Catálogo de Regras com Edição e Duplicação */}
+          {/* 1. Formulário de Cadastro / Edição de Regra de Escala */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              Regras de Escala Configuradas no Motor Central ({db.scheduleRules.length})
+              {editingRuleId
+                ? `Editar regra de escala: ${ruleCode}`
+                : "Cadastrar / Editar regra de escala"}
             </div>
-            <table style={{ ...ui.table, marginBottom: 16 }}>
-              <thead>
-                <tr style={{ background: "var(--uniao-table-header-bg, #2B5690)", color: "#fff" }}>
-                  <th style={ui.th}>Código</th>
-                  <th style={{ ...ui.th, textAlign: "left" }}>Nome da Regra</th>
-                  <th style={ui.th}>Modelo</th>
-                  <th style={ui.th}>Ciclo</th>
-                  <th style={ui.th}>Dias Permitidos p/ Folga</th>
-                  <th style={ui.th}>Máx. Dias Seguidos</th>
-                  <th style={ui.th}>Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {db.scheduleRules.map((r) => (
-                  <tr key={r.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                    <td style={{ ...ui.td, textAlign: "center", fontWeight: 800, color: "#1d4ed8" }}>
-                      {r.code}
-                    </td>
-                    <td style={{ ...ui.td, fontWeight: 700 }}>{r.name}</td>
-                    <td style={{ ...ui.td, textAlign: "center", fontSize: 11 }}>{r.ruleType}</td>
-                    <td style={{ ...ui.td, textAlign: "center", fontWeight: 700 }}>
-                      {r.workDaysInCycle} × {r.restDaysInCycle}
-                    </td>
-                    <td style={{ ...ui.td, textAlign: "center", fontSize: 11 }}>
-                      {r.allowedRestDows?.length
-                        ? r.allowedRestDows
-                            .map((d) => ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d])
-                            .join(" / ")
-                        : "Corrido (Contínuo)"}
-                    </td>
-                    <td style={{ ...ui.td, textAlign: "center" }}>{r.maxConsecutiveWorkDays} dias</td>
-                    <td style={{ ...ui.td, textAlign: "center" }}>
-                      <div style={{ display: "flex", gap: 5, justifyContent: "center" }}>
-                        <button
-                          onClick={() => {
-                            setRuleConfigMode("advanced");
-                            loadRuleIntoForm(r, false);
-                          }}
-                          style={ui.btnSmall}
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
-                          onClick={() => {
-                            setRuleConfigMode("advanced");
-                            loadRuleIntoForm(r, true);
-                          }}
-                          style={ui.btnSmall}
-                        >
-                          📋 Duplicar
-                        </button>
-                        {db.scheduleRules.length > 1 && (
-                          <button
-                            onClick={() => handleDeleteRule(r)}
-                            style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
-                          >
-                            🗑️ Excluir
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
 
-            {/* Formulário de Configuração em 2 Níveis (Modo Simples vs Modo Avançado — Seção 21) */}
-            <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14 }}>
+            {ruleFormErrors.length > 0 && (
               <div
+                role="alert"
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
+                  marginTop: 8,
                   marginBottom: 12,
-                  flexWrap: "wrap",
-                  gap: 8,
+                  padding: "10px 12px",
+                  borderRadius: 6,
+                  background: "#fef2f2",
+                  border: "1px solid #fecaca",
+                  color: "#991b1b",
+                  fontSize: 12,
+                  fontWeight: 600,
                 }}
               >
-                <div style={{ fontSize: 13.5, fontWeight: 800 }}>
-                  {editingRuleId
-                    ? `✏️ Editando Regra: ${ruleCode}`
-                    : "➕ Configurar Regra de Escala (Modo Simples ou Avançado)"}
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    type="button"
-                    onClick={() => setRuleConfigMode("simple")}
-                    style={ruleConfigMode === "simple" ? ui.subTabActive : ui.subTab}
-                  >
-                    ✨ Modo Simples (Modelos Prontos + Prévia Visual)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRuleConfigMode("advanced")}
-                    style={ruleConfigMode === "advanced" ? ui.subTabActive : ui.subTab}
-                  >
-                    🔧 Modo Avançado (Parâmetros Técnicos)
-                  </button>
+                {ruleFormErrors.map((err, i) => (
+                  <div key={i}>• {err}</div>
+                ))}
+              </div>
+            )}
+
+            <form
+              onSubmit={handleSaveRule}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(175px, 1fr))",
+                gap: 12,
+                alignItems: "end",
+                marginTop: 10,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Código *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: 5X2 DOM QUA QUI"
+                  value={ruleCode}
+                  onChange={(e) => {
+                    setRuleFormErrors([]);
+                    setRuleCode(e.target.value);
+                  }}
+                  style={ui.input}
+                />
+              </div>
+              <div style={{ minWidth: 0, gridColumn: "span 2" }}>
+                <label style={ui.label}>Nome *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Escala 5x2 (Domingo fixo + Quarta ou Quinta)"
+                  value={ruleName}
+                  onChange={(e) => {
+                    setRuleFormErrors([]);
+                    setRuleName(e.target.value);
+                  }}
+                  style={ui.input}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Dias de trabalho</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={ruleWorkDays}
+                  onChange={(e) => {
+                    setRuleFormErrors([]);
+                    setRuleWorkDays(e.target.value);
+                  }}
+                  style={ui.input}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Dias de descanso</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={5}
+                  value={ruleRestDays}
+                  onChange={(e) => {
+                    setRuleFormErrors([]);
+                    setRuleRestDays(e.target.value);
+                  }}
+                  style={ui.input}
+                />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Máx. dias consecutivos</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={ruleMaxConsec}
+                  onChange={(e) => {
+                    setRuleFormErrors([]);
+                    setRuleMaxConsec(e.target.value);
+                  }}
+                  style={ui.input}
+                />
+              </div>
+
+              <div style={{ minWidth: 0, gridColumn: "1 / -1" }}>
+                <label style={ui.label}>Dias da semana permitidos para folga</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {DIAS_SEMANA_CURTO.map((lb, idx) => {
+                    const selected = ruleAllowedDows.includes(idx);
+                    return (
+                      <button
+                        type="button"
+                        key={`allowed_${lb}`}
+                        aria-pressed={selected}
+                        onClick={() => toggleAllowedDow(idx)}
+                        style={selected ? ui.pillActive : ui.pill}
+                      >
+                        {lb}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {ruleConfigMode === "simple" && (
-                <div
-                  style={{
-                    background: "#f8fafc",
-                    border: "1px solid #cbd5e1",
-                    borderRadius: 8,
-                    padding: 12,
-                    marginBottom: 12,
-                  }}
-                >
-                  <label style={ui.label}>Escolha um Modelo de Ciclo Operacional:</label>
-                  <select
-                    value={selectedTemplateId}
-                    onChange={(e) => handleSelectRuleTemplate(e.target.value)}
-                    style={{ ...ui.select, marginBottom: 10 }}
-                  >
-                    {SIMPLE_RULE_TEMPLATES.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-
-                  {(() => {
-                    const tpl =
-                      SIMPLE_RULE_TEMPLATES.find((t) => t.id === selectedTemplateId) ||
-                      SIMPLE_RULE_TEMPLATES[0];
+              <div style={{ minWidth: 0, gridColumn: "1 / -1" }}>
+                <label style={ui.label}>
+                  Dias de folga fixa na geração automática (subconjunto dos dias permitidos)
+                </label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {DIAS_SEMANA_CURTO.map((lb, idx) => {
+                    const isAllowed = ruleAllowedDows.includes(idx);
+                    const isFixed = ruleFixedDows.includes(idx);
                     return (
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 700, color: "#475569", marginBottom: 4 }}>
-                          Prévia Visual de 14 Dias do Ciclo ({tpl.workDays}x{tpl.restDays}):
-                        </div>
-                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {tpl.preview.map((st, idx) => (
-                            <span
-                              key={idx}
-                              style={{
-                                width: 32,
-                                padding: "4px 0",
-                                textAlign: "center",
-                                borderRadius: 4,
-                                fontSize: 10,
-                                fontWeight: 800,
-                                background: st === "F" ? "#1e3a8a" : "#dcfce7",
-                                color: st === "F" ? "#fff" : "#166534",
-                              }}
-                            >
-                              D{idx + 1}:{st}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
+                      <button
+                        type="button"
+                        key={`fixed_${lb}`}
+                        aria-pressed={isFixed}
+                        disabled={!isAllowed}
+                        title={
+                          isAllowed
+                            ? `Marcar ${lb} como folga fixa na geração automática`
+                            : `Selecione ${lb} nos dias permitidos para poder marcá-lo como fixo`
+                        }
+                        onClick={() => toggleFixedDow(idx)}
+                        style={{
+                          ...(isFixed ? ui.pillActive : ui.pill),
+                          opacity: isAllowed ? 1 : 0.45,
+                          cursor: isAllowed ? "pointer" : "not-allowed",
+                        }}
+                      >
+                        {lb}
+                      </button>
                     );
-                  })()}
+                  })}
                 </div>
-              )}
+              </div>
 
-              <form
-                onSubmit={handleSaveRule}
+              <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                  gap: 10,
-                  alignItems: "end",
+                  gridColumn: "1 / -1",
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  paddingTop: 4,
                 }}
               >
-                <div>
-                  <label style={ui.label}>Código da Regra *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: 5X2 (DOM/SEG)"
-                    value={ruleCode}
-                    onChange={(e) => setRuleCode(e.target.value)}
-                    style={ui.input}
-                  />
-                </div>
-                <div>
-                  <label style={ui.label}>Nome Descritivo *</label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: Escala 5x2 Operacional"
-                    value={ruleName}
-                    onChange={(e) => setRuleName(e.target.value)}
-                    style={ui.input}
-                  />
+                <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={ruleSundayLunch}
+                      onChange={(e) => setRuleSundayLunch(e.target.checked)}
+                    />
+                    <span>Exigir faixa de almoço aos domingos</span>
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={ruleClosedCountsRest}
+                      onChange={(e) => setRuleClosedCountsRest(e.target.checked)}
+                    />
+                    <span>Mercado fechado conta como descanso no ciclo</span>
+                  </label>
                 </div>
 
-                {ruleConfigMode === "advanced" && (
-                  <>
-                    <div>
-                      <label style={ui.label}>Tipo do Motor</label>
-                      <select
-                        value={ruleType}
-                        onChange={(e) => setRuleType(e.target.value)}
-                        style={ui.select}
-                      >
-                        <option value="5X2">5X2 (5 Trab. / 2 Descanso)</option>
-                        <option value="5X1">5X1 (Ciclo Contínuo)</option>
-                        <option value="6X1_FLEX">6X1 Revezamento de Dias</option>
-                        <option value="6X1_DOM">6X1 Folga Fixa Domingo</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label style={ui.label}>Dias de Trabalho</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={ruleWorkDays}
-                        onChange={(e) => setRuleWorkDays(e.target.value)}
-                        style={ui.input}
-                      />
-                    </div>
-                    <div>
-                      <label style={ui.label}>Dias de Descanso</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={5}
-                        value={ruleRestDays}
-                        onChange={(e) => setRuleRestDays(e.target.value)}
-                        style={ui.input}
-                      />
-                    </div>
-                    <div>
-                      <label style={ui.label}>Máx. Dias Consecutivos</label>
-                      <input
-                        type="number"
-                        min={1}
-                        max={10}
-                        value={ruleMaxConsec}
-                        onChange={(e) => setRuleMaxConsec(e.target.value)}
-                        style={ui.input}
-                      />
-                    </div>
-                    <div>
-                      <label style={ui.label}>Dias Permitidos p/ Folga</label>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                        {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((lb, idx) => (
-                          <button
-                            type="button"
-                            key={lb}
-                            onClick={() => toggleDow(idx)}
-                            style={{
-                              fontSize: 10,
-                              padding: "4px 6px",
-                              borderRadius: 4,
-                              border: "1px solid #cbd5e1",
-                              background: ruleDows.includes(idx) ? "#0f172a" : "#fff",
-                              color: ruleDows.includes(idx) ? "#fff" : "#334155",
-                              cursor: "pointer",
-                            }}
-                          >
-                            {lb}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button type="submit" style={ui.btnPrimary}>
-                    {editingRuleId ? "Salvar Alterações da Regra" : "Salvar Regra"}
+                    {editingRuleId ? "Salvar alterações da regra" : "Salvar regra"}
                   </button>
                   {editingRuleId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingRuleId(null);
-                        setRuleCode("");
-                        setRuleName("");
-                      }}
-                      style={ui.btnSmall}
-                    >
+                    <button type="button" onClick={resetRuleForm} style={ui.btnSecondary}>
                       Cancelar
                     </button>
                   )}
                 </div>
-              </form>
+              </div>
+            </form>
+          </div>
+
+          {/* 2. Tabela de Regras Cadastradas */}
+          <div style={ui.card}>
+            <div style={ui.cardTitle}>
+              Regras de escala cadastradas ({db.scheduleRules.length})
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={ui.table}>
+                <thead>
+                  <tr style={{ background: "var(--uniao-table-header-bg, #F1F5F9)" }}>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Código</th>
+                    <th style={{ ...ui.th, textAlign: "left" }}>Nome da regra</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Ciclo</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Dias permitidos</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Folga fixa (automática)</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Máx. consecutivos</th>
+                    <th style={{ ...ui.th, textAlign: "center", whiteSpace: "nowrap" }}>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {db.scheduleRules.map((r) => {
+                    const norm = normalizeScheduleRule(r);
+                    return (
+                      <tr key={r.id} style={{ borderBottom: "1px solid #e2e8f0" }}>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, color: "#1d4ed8", whiteSpace: "nowrap" }}>
+                          {r.code}
+                        </td>
+                        <td style={{ ...ui.td, fontWeight: 600 }}>{r.name}</td>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {norm.workDaysInCycle} × {norm.restDaysInCycle}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", fontSize: 12, whiteSpace: "nowrap" }}>
+                          {norm.allowedRestDows.length > 0
+                            ? formatDowsList(norm.allowedRestDows)
+                            : "Contínuo"}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", fontSize: 12, whiteSpace: "nowrap" }}>
+                          {norm.fixedRestDows.length > 0
+                            ? formatDowsList(norm.fixedRestDows)
+                            : "Variável"}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          {norm.maxConsecutiveWorkDays} dias
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "inline-flex", gap: 6, justifyContent: "center", flexWrap: "nowrap" }}>
+                            <button
+                              type="button"
+                              onClick={() => loadRuleIntoForm(r, false)}
+                              style={ui.btnSmall}
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => loadRuleIntoForm(r, true)}
+                              style={ui.btnSmall}
+                            >
+                              Duplicar
+                            </button>
+                            {db.scheduleRules.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteRule(r)}
+                                style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
+                              >
+                                Excluir
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
 
-          {/* Mudança de Regra com Vigência Temporal */}
+          {/* 3. Alteração de Regra de Escala por Colaborador e Vigências */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              📅 Mudança de Regra de Escala durante o Mês (Vigência Temporal por Colaborador)
+              Alteração de regra de escala
             </div>
             <form
               onSubmit={handleAddRuleAssignment}
@@ -1051,9 +1092,10 @@ export default function RulesShiftsAndCalendarModule({
                 gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
                 gap: 10,
                 alignItems: "end",
+                marginTop: 8,
               }}
             >
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={ui.label}>Colaborador</label>
                 <select
                   value={ovEmpId}
@@ -1067,8 +1109,8 @@ export default function RulesShiftsAndCalendarModule({
                   ))}
                 </select>
               </div>
-              <div>
-                <label style={ui.label}>Nova Regra de Escala</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Nova regra de escala</label>
                 <select
                   value={ovRuleId}
                   onChange={(e) => setOvRuleId(e.target.value)}
@@ -1081,8 +1123,8 @@ export default function RulesShiftsAndCalendarModule({
                   ))}
                 </select>
               </div>
-              <div>
-                <label style={ui.label}>Início da Vigência</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Início da vigência</label>
                 <input
                   type="date"
                   required
@@ -1091,8 +1133,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>Fim da Vigência (Opcional)</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>Fim da vigência (opcional)</label>
                 <input
                   type="date"
                   value={ovToDate}
@@ -1101,19 +1143,19 @@ export default function RulesShiftsAndCalendarModule({
                 />
               </div>
               <button type="submit" style={ui.btnPrimary}>
-                Aplicar Vigência
+                Aplicar vigência
               </button>
             </form>
 
             {(db.ruleAssignments || []).length > 0 && (
-              <div style={{ marginTop: 14 }}>
+              <div style={{ marginTop: 14, overflowX: "auto" }}>
                 <table style={ui.table}>
                   <thead>
                     <tr style={{ background: "#f1f5f9" }}>
                       <th style={{ ...ui.th, textAlign: "left" }}>Colaborador</th>
-                      <th style={ui.th}>Regra Aplicada</th>
-                      <th style={ui.th}>Período de Vigência</th>
-                      <th style={ui.th}>Ações</th>
+                      <th style={{ ...ui.th, textAlign: "center" }}>Regra aplicada</th>
+                      <th style={{ ...ui.th, textAlign: "center" }}>Período de vigência</th>
+                      <th style={{ ...ui.th, textAlign: "center" }}>Ações</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1123,19 +1165,20 @@ export default function RulesShiftsAndCalendarModule({
                       return (
                         <tr key={ra.id}>
                           <td style={{ ...ui.td, fontWeight: 700 }}>{emp?.fullName}</td>
-                          <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, color: "#1d4ed8" }}>
+                          <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, color: "#1d4ed8", whiteSpace: "nowrap" }}>
                             {rule?.code}
                           </td>
-                          <td style={{ ...ui.td, textAlign: "center" }}>
+                          <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
                             A partir de {ra.effectiveFrom.split("-").reverse().join("/")}
                             {ra.effectiveTo ? ` até ${ra.effectiveTo.split("-").reverse().join("/")}` : " (Indeterminado)"}
                           </td>
-                          <td style={{ ...ui.td, textAlign: "center" }}>
+                          <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
                             <button
+                              type="button"
                               onClick={() => handleDeleteRuleAssignment(ra)}
                               style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
                             >
-                              🗑️ Excluir
+                              Excluir
                             </button>
                           </td>
                         </tr>
@@ -1151,47 +1194,25 @@ export default function RulesShiftsAndCalendarModule({
 
       {subTab === "shifts" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Formulário CRUD Completo das 8 Colunas de Horário + Cálculo Aritmético Ativo (Seção 20) */}
+          {/* Formulário de Cadastro / Edição de Jornada Contratual (7 colunas) */}
           <div style={ui.card}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 8,
-                marginBottom: 10,
-              }}
-            >
-              <div>
-                <div style={ui.cardTitle}>
-                  {editingShiftId
-                    ? `✏️ Editando Jornada Contratual: ${shiftCode}`
-                    : "➕ Cadastrar / Editar Jornada Contratual (8 Colunas Ativas no Motor)"}
-                </div>
-                <div style={{ fontSize: 11.5, color: "#64748b" }}>
-                  O motor utiliza estas 8 colunas para calcular carga contratual, complemento, intervalo intrajornada e validar o descanso mínimo interjornada de 11h entre dias seguidos.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={handleAutoCalculateShiftWorkloads}
-                style={{ ...ui.btnSmall, background: "#eff6ff", color: "#1d4ed8", borderColor: "#93c5fd" }}
-              >
-                ⚡ Calcular Carga Base e Complemento Automaticamente
-              </button>
+            <div style={ui.cardTitle}>
+              {editingShiftId
+                ? `Editar jornada contratual: ${shiftCode}`
+                : "Cadastrar / Editar jornada contratual"}
             </div>
 
             <form
               onSubmit={handleSaveShift}
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(135px, 1fr))",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                 gap: 10,
                 alignItems: "end",
+                marginTop: 10,
               }}
             >
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={ui.label}>Turno</label>
                 <select
                   value={shiftPeriod}
@@ -1204,7 +1225,7 @@ export default function RulesShiftsAndCalendarModule({
                   <option value="NOITE">NOITE</option>
                 </select>
               </div>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={ui.label}>1. Entrada</label>
                 <input
                   type="time"
@@ -1213,8 +1234,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>2. Início Intervalo</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>2. Início do intervalo</label>
                 <input
                   type="time"
                   value={breakStart}
@@ -1222,8 +1243,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>3. Fim Intervalo</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>3. Fim do intervalo</label>
                 <input
                   type="time"
                   value={breakEnd}
@@ -1231,8 +1252,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>4. Saída Base</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>4. Saída base</label>
                 <input
                   type="time"
                   value={exitBaseTime}
@@ -1240,17 +1261,18 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
+              <div style={{ minWidth: 0 }}>
                 <label style={ui.label}>5. C.H. Base</label>
                 <input
                   type="time"
                   value={baseWorkload}
-                  onChange={(e) => setBaseWorkload(e.target.value)}
-                  style={ui.input}
+                  readOnly
+                  aria-readonly="true"
+                  style={{ ...ui.input, background: "#f1f5f9", fontWeight: 700 }}
                 />
               </div>
-              <div>
-                <label style={ui.label}>6. Adic. / Compl.</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>6. Adicional / Complemento</label>
                 <input
                   type="time"
                   value={extensionWorkload}
@@ -1258,8 +1280,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>7. Saída Real</label>
+              <div style={{ minWidth: 0 }}>
+                <label style={ui.label}>7. Saída real</label>
                 <input
                   type="time"
                   value={effectiveExitTime}
@@ -1267,17 +1289,8 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div>
-                <label style={ui.label}>8. C.H. Contratual</label>
-                <input
-                  type="time"
-                  value={contractDailyWorkload}
-                  onChange={(e) => setContractDailyWorkload(e.target.value)}
-                  style={ui.input}
-                />
-              </div>
-              <div style={{ gridColumn: "span 2" }}>
-                <label style={ui.label}>Nome Descritivo (Opcional — gerado auto se vazio)</label>
+              <div style={{ minWidth: 0, gridColumn: "span 2" }}>
+                <label style={ui.label}>Descrição (opcional)</label>
                 <input
                   type="text"
                   placeholder="Ex: 07:00 às 15:50 (c/ 1h40 compl. → 17:30)"
@@ -1286,9 +1299,9 @@ export default function RulesShiftsAndCalendarModule({
                   style={ui.input}
                 />
               </div>
-              <div style={{ display: "flex", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <button type="submit" style={ui.btnPrimary}>
-                  {editingShiftId ? "Salvar Jornada" : "+ Criar Jornada"}
+                  {editingShiftId ? "Salvar jornada" : "Cadastrar jornada"}
                 </button>
                 {editingShiftId && (
                   <button
@@ -1298,7 +1311,7 @@ export default function RulesShiftsAndCalendarModule({
                       setShiftCode("");
                       setShiftName("");
                     }}
-                    style={ui.btnSmall}
+                    style={ui.btnSecondary}
                   >
                     Cancelar
                   </button>
@@ -1306,77 +1319,134 @@ export default function RulesShiftsAndCalendarModule({
               </div>
             </form>
 
-            {/* Painel de Verificação Aritmética em Tempo Real */}
-            <div
-              style={{
-                marginTop: 12,
-                padding: "8px 12px",
-                borderRadius: 8,
-                background: liveShiftMetrics.valid ? "#f0fdf4" : "#fffbeb",
-                border: `1px solid ${liveShiftMetrics.valid ? "#bbf7d0" : "#fde68a"}`,
-                fontSize: 11.5,
-                color: liveShiftMetrics.valid ? "#166534" : "#92400e",
-              }}
-            >
-              <div>
-                🧮 <strong>Cálculo do Motor em Tempo Real:</strong> Intervalo Intrajornada ={" "}
-                <strong>{liveShiftMetrics.breakDurationFormatted}h</strong> · Carga Base Calculada ={" "}
-                <strong>{liveShiftMetrics.derivedBaseFormatted}h</strong> · Complemento Calculado ={" "}
-                <strong>+{liveShiftMetrics.derivedExtensionFormatted}h</strong> · Jornada Efetiva Total ={" "}
-                <strong>{liveShiftMetrics.derivedTotalEffectiveFormatted}h</strong>
+            {liveShiftMetrics.warnings.length > 0 && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: "8px 12px",
+                  borderRadius: 6,
+                  background: "#fffbeb",
+                  border: "1px solid #fde68a",
+                  fontSize: 12,
+                  color: "#92400e",
+                }}
+              >
+                {liveShiftMetrics.warnings.map((w, i) => (
+                  <div key={i}>• {w}</div>
+                ))}
               </div>
-              {liveShiftMetrics.warnings.length > 0 && (
-                <div style={{ marginTop: 4 }}>
-                  {liveShiftMetrics.warnings.map((w, i) => (
-                    <div key={i}>⚠️ {w}</div>
-                  ))}
-                </div>
-              )}
-            </div>
+            )}
           </div>
 
-          {/* Tabela das Jornadas Contratuais Extraídas da Planilha + Auditoria Aritmética */}
+          {/* Tabela das Jornadas Contratuais */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              ⏰ Quadro de Jornadas Contratuais Cadastradas ({db.workShifts.length} horários)
+              Jornadas contratuais cadastradas ({db.workShifts.length})
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={ui.table}>
                 <thead>
-                  <tr style={{ background: "var(--uniao-table-header-bg, #2B5690)", color: "#fff" }}>
-                    <th style={ui.th}>Turno</th>
-                    <th style={{ ...ui.th, textAlign: "left" }}>Descrição da Jornada</th>
-                    <th style={ui.th}>1. Entrada</th>
-                    <th style={ui.th}>2. Início Int.</th>
-                    <th style={ui.th}>3. Fim Int.</th>
-                    <th style={ui.th}>4. Saída Base</th>
-                    <th style={ui.th}>5. C.H. Base</th>
-                    <th style={ui.th}>6. Compl.</th>
-                    <th style={ui.th}>7. Saída Real</th>
-                    <th style={ui.th}>8. Contratual</th>
-                    <th style={ui.th}>Total Efetivo</th>
-                    <th style={ui.th}>Ações</th>
+                  <tr style={{ background: "var(--uniao-table-header-bg, #F1F5F9)" }}>
+                    {SHIFT_COLUMNS.map((col) => {
+                      const isSorted = shiftSort.key === col.key;
+                      const ariaSort = isSorted
+                        ? shiftSort.direction === "asc"
+                          ? "ascending"
+                          : "descending"
+                        : "none";
+                      const indicator = isSorted
+                        ? shiftSort.direction === "asc"
+                          ? "↑"
+                          : "↓"
+                        : "↕";
+                      return (
+                        <th
+                          key={col.key}
+                          aria-sort={ariaSort}
+                          style={{
+                            ...ui.th,
+                            textAlign: col.align,
+                            padding: 0,
+                            verticalAlign: "bottom",
+                          }}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleToggleShiftSort(col.key)}
+                            style={{
+                              width: "100%",
+                              padding: "8px 10px",
+                              border: "none",
+                              background: "transparent",
+                              color: "inherit",
+                              font: "inherit",
+                              cursor: "pointer",
+                              display: "flex",
+                              flexDirection: "column",
+                              alignItems: col.align === "left" ? "flex-start" : "center",
+                              gap: 2,
+                            }}
+                          >
+                            {col.num && (
+                              <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7 }}>
+                                {col.num}
+                              </span>
+                            )}
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              <span>{col.label}</span>
+                              <span
+                                aria-hidden="true"
+                                style={{
+                                  fontSize: 10.5,
+                                  opacity: isSorted ? 0.95 : 0.35,
+                                }}
+                              >
+                                {indicator}
+                              </span>
+                            </span>
+                          </button>
+                        </th>
+                      );
+                    })}
+                    <th style={{ ...ui.th, textAlign: "center", verticalAlign: "bottom", whiteSpace: "nowrap" }}>
+                      Ações
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {db.workShifts.map((sh) => {
+                  {sortedWorkShifts.map((sh) => {
                     const m = calculateShiftMetrics(sh);
+                    const computedRowBase = computeBaseWorkload(
+                      sh.entryTime,
+                      sh.breakStart,
+                      sh.breakEnd,
+                      sh.exitBaseTime
+                    ).formatted;
                     return (
                       <tr
                         key={sh.id}
                         style={{
                           borderBottom: "1px solid #e2e8f0",
-                          opacity: sh.active === false ? 0.5 : 1,
+                          opacity: sh.active === false ? 0.55 : 1,
                         }}
                       >
-                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700 }}>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>
                           <span
                             style={{
+                              display: "inline-block",
                               background: sh.shiftPeriod === "MANHÃ" ? "#dbeafe" : "#fef3c7",
                               color: sh.shiftPeriod === "MANHÃ" ? "#1e40af" : "#92400e",
-                              padding: "2px 7px",
+                              padding: "2px 8px",
                               borderRadius: 4,
-                              fontSize: 10.5,
+                              fontSize: 11,
+                              whiteSpace: "nowrap",
                             }}
                           >
                             {sh.shiftPeriod}
@@ -1385,61 +1455,65 @@ export default function RulesShiftsAndCalendarModule({
                         <td style={{ ...ui.td, fontWeight: 600 }}>
                           {sh.name}
                           {!m.valid && (
-                            <div style={{ fontSize: 10, color: "#b45309", marginTop: 2 }}>
-                              ⚠ {m.warnings[0]}
+                            <div style={{ fontSize: 10.5, color: "#b45309", marginTop: 2 }}>
+                              {m.warnings[0]}
                             </div>
                           )}
                         </td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{sh.entryTime}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{sh.breakStart}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{sh.breakEnd}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{sh.exitBaseTime}</td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>{sh.baseWorkload}</td>
-                        <td style={{ ...ui.td, textAlign: "center", color: "#64748b" }}>
-                          +{sh.extensionWorkload}
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>{sh.entryTime}</td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>{sh.breakStart}</td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>{sh.breakEnd}</td>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>{sh.exitBaseTime}</td>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {sh.baseWorkload || computedRowBase}
                         </td>
-                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, color: "#0f172a" }}>
+                        <td style={{ ...ui.td, textAlign: "center", color: "#64748b", whiteSpace: "nowrap" }}>
+                          +{sh.extensionWorkload || "00:00"}
+                        </td>
+                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap" }}>
                           {sh.effectiveExitTime}
-                        </td>
-                        <td style={{ ...ui.td, textAlign: "center", fontWeight: 700 }}>
-                          {sh.contractDailyWorkload}
                         </td>
                         <td
                           style={{
                             ...ui.td,
                             textAlign: "center",
-                            fontWeight: 800,
+                            fontWeight: 700,
                             color: m.valid ? "#166534" : "#b45309",
+                            whiteSpace: "nowrap",
                           }}
                         >
                           {m.derivedTotalEffectiveFormatted}h
                         </td>
-                        <td style={{ ...ui.td, textAlign: "center" }}>
-                          <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                        <td style={{ ...ui.td, textAlign: "center", whiteSpace: "nowrap" }}>
+                          <div style={{ display: "inline-flex", gap: 6, justifyContent: "center", flexWrap: "nowrap" }}>
                             <button
+                              type="button"
                               onClick={() => loadShiftIntoForm(sh, false)}
                               style={ui.btnSmall}
                             >
-                              ✏️ Editar
+                              Editar
                             </button>
                             <button
+                              type="button"
                               onClick={() => loadShiftIntoForm(sh, true)}
                               style={ui.btnSmall}
                             >
-                              📋 Duplicar
+                              Duplicar
                             </button>
                             <button
+                              type="button"
                               onClick={() => handleToggleDeactivateShift(sh)}
-                              style={{ ...ui.btnSmall, color: "#64748b" }}
+                              style={{ ...ui.btnSmall, color: "#475569" }}
                             >
                               {sh.active === false ? "Ativar" : "Desativar"}
                             </button>
                             {db.workShifts.length > 1 && (
                               <button
+                                type="button"
                                 onClick={() => handleDeleteShift(sh)}
                                 style={{ ...ui.btnSmall, color: "#991b1b", borderColor: "#fca5a5" }}
                               >
-                                🗑️ Excluir
+                                Excluir
                               </button>
                             )}
                           </div>
@@ -1455,7 +1529,7 @@ export default function RulesShiftsAndCalendarModule({
           {/* Tabela de Faixas de Almoço de Domingo / Feriado */}
           <div style={ui.card}>
             <div style={ui.cardTitle}>
-              🍽️ Escala de Intervalos de Almoço aos Domingos e Feriados (N 01 a N 04)
+              Faixas de almoço aos domingos e feriados (N 01 a N 04)
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10 }}>
               {Object.entries(FAIXAS_ALMOCO_DOMINGO).map(([num, info]) => (
@@ -1468,7 +1542,7 @@ export default function RulesShiftsAndCalendarModule({
                     padding: "10px 14px",
                   }}
                 >
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "#166534" }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#166534" }}>
                     Célula "{num}" → {info.codigo}
                   </div>
                   <div style={{ fontSize: 12, color: "#15803d", marginTop: 2 }}>

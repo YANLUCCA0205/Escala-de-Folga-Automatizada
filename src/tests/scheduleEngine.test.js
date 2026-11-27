@@ -24,10 +24,17 @@ import {
   getActiveAllocationOnDate,
   computeDynamicEmploymentStatus,
   calculateShiftMetrics,
+  computeBaseWorkload,
   checkInterjornadaRest,
   calculateEmployeeMonthlyWorkload,
   isScheduleLockedForEditing,
   reopenPublishedSchedule,
+  STANDARD_5X2_SCHEDULE_RULES,
+  ensureStandardScheduleRules,
+  deriveRuleType,
+  validateScheduleRuleConfig,
+  validateManualCellEdit,
+  getDayOfWeekISO,
 } from "../domain/scheduleEngine.js";
 import { buildInitialErpDatabase } from "../domain/seedLoja03.js";
 import {
@@ -2160,6 +2167,671 @@ test("Cenário 51: Registros excluídos (deletedEntityIds) não são ressuscitad
     false,
     "O posto excluído localmente jamais deve voltar do banco remoto quando consta em deletedEntityIds"
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CENÁRIOS 52..62 — CORREÇÕES OPERACIONAIS PÓS-VALIDAÇÃO COM RH (v9.0)
+// ─────────────────────────────────────────────────────────────────────────────
+test("Cenário 52: Cálculo automático reativo de C.H. Base = (Saída base - Entrada) - (Fim intervalo - Início intervalo)", () => {
+  const calc = computeBaseWorkload("07:00", "11:30", "13:00", "15:50");
+  assert.equal(calc.formatted, "07:20");
+  assert.equal(calc.minutes, 440);
+
+  const metrics = calculateShiftMetrics({
+    entryTime: "07:00",
+    breakStart: "11:30",
+    breakEnd: "13:00",
+    exitBaseTime: "15:50",
+    baseWorkload: calc.formatted,
+    extensionWorkload: "01:40",
+    effectiveExitTime: "17:30",
+    contractDailyWorkload: calc.formatted,
+  });
+  assert.equal(metrics.valid, true);
+  assert.equal(metrics.derivedBaseFormatted, "07:20");
+  assert.equal(metrics.derivedExtensionFormatted, "01:40");
+  assert.equal(metrics.derivedTotalEffectiveFormatted, "09:00");
+});
+
+test("Cenário 53: 5x2 com dois dias fixos (5X2 DOM SAB) gera folgas exclusivamente em Sábado e Domingo", () => {
+  const db = buildInitialErpDatabase();
+  const rulesById = Object.fromEntries(db.scheduleRules.map((r) => [r.id, r]));
+  const domSab = db.scheduleRules.find((r) => r.code === "5X2 DOM SAB");
+  assert.ok(domSab, "Regra 5X2 DOM SAB deve existir sem duplicação");
+
+  const emp = { id: "emp_dom_sab", fullName: "COLAB DOM SAB", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_ds_1",
+      employeeId: emp.id,
+      workPositionId: "pos_ds_1",
+      unitId: "LOJA_03",
+      sectorId: "SEC_FINANCEIRO",
+      scheduleRuleId: domSab.id,
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+  const { entries } = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-11",
+    allocations,
+    rulesById,
+    previousMonthEntries: [{ workDate: "2026-10-31", status: "F" }],
+  });
+
+  for (const e of entries) {
+    const dow = getDayOfWeekISO(e.workDate);
+    if (dow === 0 || dow === 6) {
+      assert.equal(e.status, "F", `${e.workDate} deve ser folga fixa`);
+    } else {
+      assert.equal(e.status, "T", `${e.workDate} deve ser trabalho`);
+    }
+  }
+});
+
+test("Cenário 54: 5x2 com domingo fixo e múltiplos dias permitidos (DOM/QUA/QUI) concede exatamente 2 folgas por semana (Dom + Qua ou Dom + Qui), nunca 3", () => {
+  const rulesById = {
+    rule_dqq: {
+      id: "rule_dqq",
+      code: "5X2 DOM QUA QUI",
+      name: "5x2 Dom / Qua / Qui",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 3, 4],
+      fixedRestDows: [0],
+      fixedWeekdays: false,
+      maxConsecutiveWorkDays: 5,
+      requiresSundayLunchSlot: false,
+      closedMarketCountsAsRest: true,
+    },
+  };
+  const emp = { id: "emp_dqq", fullName: "COLAB DQQ", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_dqq",
+      employeeId: emp.id,
+      workPositionId: "p_dqq",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dqq",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+
+  // Novembro 2026 começa no Domingo (01/11) -> 4 semanas completas (01..07, 08..14, 15..21, 22..28)
+  const { entries } = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-11",
+    allocations,
+    rulesById,
+    previousMonthEntries: [
+      { workDate: "2026-10-25", status: "F" },
+      { workDate: "2026-10-28", status: "F" },
+      { workDate: "2026-10-29", status: "T" },
+      { workDate: "2026-10-30", status: "T" },
+      { workDate: "2026-10-31", status: "T" },
+    ],
+    employeeRotationRank: 0,
+  });
+
+  // Verifica as 4 semanas completas de Nov/2026
+  for (let w = 0; w < 4; w++) {
+    const week = entries.slice(w * 7, w * 7 + 7);
+    const rests = week.filter((e) => e.status === "F");
+    assert.equal(rests.length, 2, `Semana ${w + 1} deve ter exatamente 2 folgas ordinárias, não 3`);
+    const restDows = rests.map((r) => getDayOfWeekISO(r.workDate)).sort();
+    assert.equal(restDows[0], 0, "Domingo fixo deve ser folga na semana");
+    assert.ok(
+      restDows[1] === 3 || restDows[1] === 4,
+      `2ª folga deve ser Quarta (3) ou Quinta (4), recebido ${restDows[1]}`
+    );
+  }
+});
+
+test("Cenário 55: Novas configurações 5x2 (5X2 DOM SAB TER, 5X2 DOM SAB, 5X2 DOM TER QUA QUI, 5X2 DOM QUARTA SEXTA) são idempotentes e geram exatamente 2 folgas por semana", () => {
+  const db = buildInitialErpDatabase();
+  const once = ensureStandardScheduleRules(db.scheduleRules);
+  const twice = ensureStandardScheduleRules(once);
+  assert.equal(once.length, twice.length, "ensureStandardScheduleRules não deve duplicar registros");
+
+  const expectedCodes = [
+    "5X2 DOM SAB TER",
+    "5X2 DOM SAB",
+    "5X2 DOM TER QUA QUI",
+    "5X2 DOM QUARTA SEXTA",
+  ];
+  const rulesById = Object.fromEntries(once.map((r) => [r.id, r]));
+
+  for (const code of expectedCodes) {
+    const rule = once.find((r) => r.code === code);
+    assert.ok(rule, `Regra ${code} deve estar disponível`);
+    assert.equal(rule.workDaysInCycle, 5);
+    assert.equal(rule.restDaysInCycle, 2);
+    assert.equal(rule.maxConsecutiveWorkDays, 5);
+
+    const emp = { id: `e_${rule.id}`, fullName: `COLAB ${code}`, hireDate: "2025-01-01" };
+    const allocations = [
+      {
+        id: `al_${rule.id}`,
+        employeeId: emp.id,
+        workPositionId: `p_${rule.id}`,
+        unitId: "LOJA_03",
+        sectorId: "SEC_CAIXA",
+        scheduleRuleId: rule.id,
+        startDate: "2025-01-01",
+        endDate: null,
+      },
+    ];
+    const { entries } = generateEmployeeScheduleForMonth({
+      employee: emp,
+      yearMonth: "2026-11",
+      allocations,
+      rulesById,
+      previousMonthEntries: [{ workDate: "2026-10-31", status: "T" }],
+    });
+
+    for (let w = 0; w < 4; w++) {
+      const week = entries.slice(w * 7, w * 7 + 7);
+      const rests = week.filter((e) => e.status === "F");
+      assert.equal(rests.length, 2, `${code} semana ${w + 1} deve ter exatamente 2 folgas`);
+      for (const r of rests) {
+        assert.ok(
+          rule.allowedRestDows.includes(getDayOfWeekISO(r.workDate)),
+          `${code}: folga em ${r.workDate} deve pertencer aos dias permitidos`
+        );
+      }
+    }
+  }
+});
+
+test("Cenário 56: Edição manual permite transferir domingo fixo para quarta ou quinta em 5x2 DOM/QUA/QUI e preserva MANUAL_OVERRIDE na regeneração", () => {
+  const rulesById = {
+    rule_dqq: {
+      id: "rule_dqq",
+      code: "5X2 DOM QUA QUI",
+      name: "5x2 Dom / Qua / Qui",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 3, 4],
+      fixedRestDows: [0],
+      fixedWeekdays: false,
+      maxConsecutiveWorkDays: 5,
+    },
+  };
+  const emp = { id: "emp_man", fullName: "COLAB MANUAL", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_man",
+      employeeId: emp.id,
+      workPositionId: "p_man",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dqq",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+
+  // RH remove folga fixa de Domingo 08/11 -> T e coloca folga em Quarta 11/11 e Quinta 12/11 (MANUAL_OVERRIDE)
+  const checkSunWork = validateManualCellEdit({
+    employee: emp,
+    isoDate: "2026-11-08",
+    targetStatus: "T",
+    allocations,
+    rulesById,
+  });
+  const checkWedRest = validateManualCellEdit({
+    employee: emp,
+    isoDate: "2026-11-11",
+    targetStatus: "F",
+    allocations,
+    rulesById,
+  });
+  const checkThuRest = validateManualCellEdit({
+    employee: emp,
+    isoDate: "2026-11-12",
+    targetStatus: "F",
+    allocations,
+    rulesById,
+  });
+
+  assert.equal(checkSunWork.allowed, true, "Deve permitir remover manualmente folga fixa de domingo");
+  assert.equal(checkWedRest.allowed, true, "Deve permitir folga manual na quarta permitida");
+  assert.equal(checkThuRest.allowed, true, "Deve permitir folga manual na quinta permitida");
+
+  const manualMap = {
+    "2026-11-08": { employeeId: emp.id, workDate: "2026-11-08", status: "T", origin: "MANUAL_OVERRIDE" },
+    "2026-11-11": { employeeId: emp.id, workDate: "2026-11-11", status: "F", origin: "MANUAL_OVERRIDE" },
+    "2026-11-12": { employeeId: emp.id, workDate: "2026-11-12", status: "F", origin: "MANUAL_OVERRIDE" },
+  };
+  const regen = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-11",
+    allocations,
+    rulesById,
+    existingManualEntriesByDate: manualMap,
+    preserveManualOverrides: true,
+    previousMonthEntries: [{ workDate: "2026-10-31", status: "T" }],
+  });
+
+  const byDate = Object.fromEntries(regen.entries.map((e) => [e.workDate, e]));
+  assert.equal(byDate["2026-11-08"].status, "T");
+  assert.equal(byDate["2026-11-08"].origin, "MANUAL_OVERRIDE");
+  assert.equal(byDate["2026-11-11"].status, "F");
+  assert.equal(byDate["2026-11-12"].status, "F");
+  const week2Rests = regen.entries.slice(7, 14).filter((e) => e.status === "F");
+  assert.equal(week2Rests.length, 2, "Semana editada manualmente mantém exatamente 2 folgas");
+});
+
+test("Cenário 57: Bloqueio de folga manual em sábado não permitido e bloqueio na troca bilateral e validação", () => {
+  const rulesById = {
+    rule_dqq: {
+      id: "rule_dqq",
+      code: "5X2 DOM QUA QUI",
+      name: "5x2 Dom / Qua / Qui",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 3, 4],
+      fixedRestDows: [0],
+      maxConsecutiveWorkDays: 5,
+    },
+  };
+  const empA = { id: "emp_a_blk", fullName: "COLAB A", hireDate: "2025-01-01" };
+  const empB = { id: "emp_b_blk", fullName: "COLAB B", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_a",
+      employeeId: empA.id,
+      workPositionId: "p_a",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dqq",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+    {
+      id: "al_b",
+      employeeId: empB.id,
+      workPositionId: "p_b",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dqq",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+
+  // 2026-11-07 é Sábado (dow = 6), não permitido em [0, 3, 4]
+  const satCheck = validateManualCellEdit({
+    employee: empA,
+    isoDate: "2026-11-07",
+    targetStatus: "F",
+    allocations,
+    rulesById,
+  });
+  assert.equal(satCheck.allowed, false);
+  assert.equal(satCheck.code, "DISALLOWED_REST_DAY");
+  assert.ok(satCheck.message.includes("Sáb"));
+
+  // Troca bilateral envolvendo sábado não permitido também é bloqueada
+  const swapRes = evaluateBilateralRestSwap({
+    targetEmp: empA,
+    targetRestDate: "2026-11-04",
+    candidateEmp: empB,
+    candidateRestDate: "2026-11-07",
+    monthEntries: [
+      { employeeId: empA.id, workDate: "2026-11-04", status: "F" },
+      { employeeId: empA.id, workDate: "2026-11-07", status: "T" },
+      { employeeId: empB.id, workDate: "2026-11-04", status: "T" },
+      { employeeId: empB.id, workDate: "2026-11-07", status: "F" },
+    ],
+    allocations,
+    rulesById,
+  });
+  assert.equal(swapRes.allowed, false);
+  assert.ok(swapRes.blockedReason);
+
+  // Rascunho com erro temporário (3 folgas na semana e folga em sábado proibido) bloqueia publicação
+  const baseGen = generateEmployeeScheduleForMonth({
+    employee: empA,
+    yearMonth: "2026-11",
+    allocations,
+    rulesById,
+    previousMonthEntries: [{ workDate: "2026-10-31", status: "T" }],
+  }).entries;
+  const tampered = baseGen.map((e) =>
+    e.workDate === "2026-11-07" ? { ...e, status: "F", origin: "MANUAL_OVERRIDE" } : e
+  );
+  const conflicts = verifyScheduleConflicts({
+    unitId: "LOJA_03",
+    yearMonth: "2026-11",
+    employees: [empA],
+    allocations,
+    rulesById,
+    sectorsById: { SEC_CAIXA: { id: "SEC_CAIXA", name: "CAIXA" } },
+    monthEntries: tampered,
+  });
+  assert.ok(conflicts.some((c) => c.type === "REST_ON_DISALLOWED_DAY" && c.blocking));
+  assert.ok(conflicts.some((c) => c.type === "WEEKLY_REST_COUNT_MISMATCH" && c.blocking));
+});
+
+test("Cenário 58: Mercado fechado fora dos dias permitidos e precedência sobre MANUAL_OVERRIDE conflitante", () => {
+  const rulesById = {
+    rule_5x2_ds: {
+      id: "rule_5x2_ds",
+      code: "5X2 DOM SAB",
+      name: "5x2 Dom / Sáb",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 6],
+      fixedRestDows: [0, 6],
+      maxConsecutiveWorkDays: 5,
+      closedMarketCountsAsRest: true,
+    },
+  };
+  const emp = { id: "emp_closed", fullName: "COLAB FECHADO", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_cl",
+      employeeId: emp.id,
+      workPositionId: "p_cl",
+      unitId: "LOJA_03",
+      sectorId: "SEC_FINANCEIRO",
+      scheduleRuleId: "rule_5x2_ds",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+  // 2026-11-02 (Segunda-feira) está fora de [0, 6] e loja está FECHADA
+  const marketCalendarByDate = {
+    "2026-11-02": { calendarDate: "2026-11-02", dayType: "HOLIDAY", openingMode: "CLOSED" },
+  };
+  // Havia lançamento manual de trabalho em 02/11 antes do fechamento
+  const manualConflict = {
+    "2026-11-02": {
+      employeeId: emp.id,
+      workDate: "2026-11-02",
+      status: "T",
+      origin: "MANUAL_OVERRIDE",
+    },
+  };
+
+  const res = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-11",
+    allocations,
+    rulesById,
+    marketCalendarByDate,
+    existingManualEntriesByDate: manualConflict,
+    preserveManualOverrides: true,
+    previousMonthEntries: [{ workDate: "2026-10-31", status: "F" }],
+  });
+
+  const byDate = Object.fromEntries(res.entries.map((e) => [e.workDate, e]));
+  assert.equal(byDate["2026-11-02"].status, "FECHADO", "Fechamento prevalece sobre MANUAL_OVERRIDE");
+  assert.equal(byDate["2026-11-01"].status, "F");
+  assert.equal(byDate["2026-11-07"].status, "F");
+  assert.ok(
+    res.warnings.some((w) => w.type === "MANUAL_OVERRIDE_SUPERSEDED_BY_CLOSED_MARKET"),
+    "Deve sinalizar que o lançamento manual de trabalho foi sobreposto pelo fechamento"
+  );
+
+  // Lançamento manual em dia fechado deve ser bloqueado na edição direta
+  const closedEditCheck = validateManualCellEdit({
+    employee: emp,
+    isoDate: "2026-11-02",
+    targetStatus: "T",
+    allocations,
+    rulesById,
+    marketCalendarByDate,
+  });
+  assert.equal(closedEditCheck.allowed, false);
+  assert.equal(closedEditCheck.code, "CLOSED_MARKET_WORK_BLOCKED");
+
+  // Escala gerada não produz falsos conflitos de contagem semanal ou dia não permitido
+  const conflicts = verifyScheduleConflicts({
+    unitId: "LOJA_03",
+    yearMonth: "2026-11",
+    employees: [emp],
+    allocations,
+    rulesById,
+    sectorsById: { SEC_FINANCEIRO: { id: "SEC_FINANCEIRO", name: "FINANCEIRO" } },
+    marketCalendarByDate,
+    monthEntries: res.entries,
+  });
+  assert.equal(
+    conflicts.some((c) => c.type === "REST_ON_DISALLOWED_DAY" || c.type === "WEEKLY_REST_COUNT_MISMATCH"),
+    false
+  );
+});
+
+test("Cenário 59: Continuidade entre competências (Setembro -> Outubro) em 5x2 com folga variável respeita folgas já gozadas na semana parcial", () => {
+  const rulesById = {
+    rule_dqq: {
+      id: "rule_dqq",
+      code: "5X2 DOM QUA QUI",
+      name: "5x2 Dom / Qua / Qui",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 3, 4],
+      fixedRestDows: [0],
+      maxConsecutiveWorkDays: 5,
+    },
+  };
+  const emp = { id: "emp_cont_5x2", fullName: "COLAB CONT 5X2", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_cont",
+      employeeId: emp.id,
+      workPositionId: "p_cont",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dqq",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+
+  // Semana de 27/09 (Dom) a 03/10 (Sáb): em Setembro já folgou 27/09 (Dom) e 30/09 (Qua) -> 2 folgas já gozadas!
+  // Logo em 01/10 (Quinta) NÃO deve ganhar uma 3ª folga na semana.
+  const sepEntries = [
+    { employeeId: emp.id, workDate: "2026-09-27", status: "F" },
+    { employeeId: emp.id, workDate: "2026-09-28", status: "T" },
+    { employeeId: emp.id, workDate: "2026-09-29", status: "T" },
+    { employeeId: emp.id, workDate: "2026-09-30", status: "F" },
+  ];
+
+  const oct = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-10",
+    allocations,
+    rulesById,
+    previousMonthEntries: sepEntries,
+  });
+
+  const octByDate = Object.fromEntries(oct.entries.map((e) => [e.workDate, e]));
+  assert.equal(octByDate["2026-10-01"].status, "T", "Quinta 01/10 deve ser T pois a semana já teve Dom + Qua em Setembro");
+  assert.equal(octByDate["2026-10-02"].status, "T");
+  assert.equal(octByDate["2026-10-03"].status, "T");
+  assert.equal(octByDate["2026-10-04"].status, "F", "Domingo 04/10 inicia nova semana com folga fixa");
+});
+
+test("Cenário 60: Vigência temporal de regras (ruleAssignments) governa geração, edição manual e verificação de conflitos", () => {
+  const rulesById = {
+    rule_dom_sab: {
+      id: "rule_dom_sab",
+      code: "5X2 DOM SAB",
+      name: "5x2 Dom / Sáb",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 6],
+      fixedRestDows: [0, 6],
+      maxConsecutiveWorkDays: 5,
+    },
+    rule_dom_qua_sex: {
+      id: "rule_dom_qua_sex",
+      code: "5X2 DOM QUARTA SEXTA",
+      name: "5x2 Dom / Qua / Sex",
+      ruleType: "5X2",
+      workDaysInCycle: 5,
+      restDaysInCycle: 2,
+      allowedRestDows: [0, 3, 5],
+      fixedRestDows: [0],
+      maxConsecutiveWorkDays: 5,
+    },
+  };
+  const emp = { id: "emp_vig", fullName: "COLAB VIGENCIA", hireDate: "2025-01-01" };
+  const allocations = [
+    {
+      id: "al_vig",
+      employeeId: emp.id,
+      workPositionId: "p_vig",
+      unitId: "LOJA_03",
+      sectorId: "SEC_CAIXA",
+      scheduleRuleId: "rule_dom_sab",
+      startDate: "2025-01-01",
+      endDate: null,
+    },
+  ];
+  const ruleAssignments = [
+    {
+      id: "ra_1",
+      employeeId: emp.id,
+      ruleId: "rule_dom_qua_sex",
+      effectiveFrom: "2026-11-15",
+      effectiveTo: null,
+    },
+  ];
+
+  // Em 14/11 (Sábado) vigora rule_dom_sab -> folga aos sábados permitida
+  assert.equal(
+    validateManualCellEdit({
+      employee: emp,
+      isoDate: "2026-11-14",
+      targetStatus: "F",
+      allocations,
+      ruleAssignments,
+      rulesById,
+    }).allowed,
+    true
+  );
+
+  // Em 21/11 (Sábado) vigora rule_dom_qua_sex -> folga aos sábados bloqueada
+  assert.equal(
+    validateManualCellEdit({
+      employee: emp,
+      isoDate: "2026-11-21",
+      targetStatus: "F",
+      allocations,
+      ruleAssignments,
+      rulesById,
+    }).allowed,
+    false
+  );
+
+  // Em 18/11 (Quarta) vigora rule_dom_qua_sex -> folga permitida
+  assert.equal(
+    validateManualCellEdit({
+      employee: emp,
+      isoDate: "2026-11-18",
+      targetStatus: "F",
+      allocations,
+      ruleAssignments,
+      rulesById,
+    }).allowed,
+    true
+  );
+
+  const gen = generateEmployeeScheduleForMonth({
+    employee: emp,
+    yearMonth: "2026-11",
+    allocations,
+    ruleAssignments,
+    rulesById,
+    previousMonthEntries: [{ workDate: "2026-10-31", status: "F" }],
+  });
+  const byDate = Object.fromEntries(gen.entries.map((e) => [e.workDate, e]));
+  assert.equal(byDate["2026-11-07"].status, "F");
+  assert.equal(byDate["2026-11-14"].status, "F");
+  assert.equal(byDate["2026-11-21"].status, "T", "Após 15/11, Sábado 21/11 não é mais permitido como folga");
+
+  const conflicts = verifyScheduleConflicts({
+    unitId: "LOJA_03",
+    yearMonth: "2026-11",
+    employees: [emp],
+    allocations,
+    ruleAssignments,
+    rulesById,
+    sectorsById: { SEC_CAIXA: { id: "SEC_CAIXA", name: "CAIXA" } },
+    monthEntries: gen.entries,
+  });
+  assert.equal(
+    conflicts.some((c) => c.blocking),
+    false,
+    "Validação de conflitos deve respeitar ruleAssignments sem falsos bloqueios"
+  );
+});
+
+test("Cenário 61: Validação de configuração de regras incompatíveis e derivação automática de ruleType", () => {
+  assert.equal(
+    deriveRuleType({ workDaysInCycle: 5, restDaysInCycle: 1, allowedRestDows: [], fixedRestDows: [] }),
+    "5X1"
+  );
+  assert.equal(
+    deriveRuleType({ workDaysInCycle: 5, restDaysInCycle: 2, allowedRestDows: [0, 3, 4], fixedRestDows: [0] }),
+    "5X2"
+  );
+  assert.equal(
+    deriveRuleType({ workDaysInCycle: 6, restDaysInCycle: 1, allowedRestDows: [0], fixedRestDows: [0] }),
+    "6X1_DOM"
+  );
+  assert.equal(
+    deriveRuleType({ workDaysInCycle: 6, restDaysInCycle: 1, allowedRestDows: [0, 1], fixedRestDows: [] }),
+    "6X1_FLEX"
+  );
+
+  // Fixo fora dos permitidos
+  const badSubset = validateScheduleRuleConfig({
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    maxConsecutiveWorkDays: 5,
+    allowedRestDows: [0, 3],
+    fixedRestDows: [0, 5],
+  });
+  assert.equal(badSubset.valid, false);
+
+  // Fixos excedendo dias de descanso
+  const badFixedCount = validateScheduleRuleConfig({
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    maxConsecutiveWorkDays: 5,
+    allowedRestDows: [0, 3, 4],
+    fixedRestDows: [0, 3, 4],
+  });
+  assert.equal(badFixedCount.valid, false);
+
+  // Máximo consecutivo incompatível com Dom/Sáb fixos (Seg..Sex = 5 dias > 4)
+  const badConsec = validateScheduleRuleConfig({
+    workDaysInCycle: 5,
+    restDaysInCycle: 2,
+    maxConsecutiveWorkDays: 4,
+    allowedRestDows: [0, 6],
+    fixedRestDows: [0, 6],
+  });
+  assert.equal(badConsec.valid, false);
+
+  // Configuração válida (STANDARD_5X2_SCHEDULE_RULES)
+  for (const r of STANDARD_5X2_SCHEDULE_RULES) {
+    assert.equal(validateScheduleRuleConfig(r).valid, true, `Regra padrão ${r.code} deve ser válida`);
+  }
 });
 
 

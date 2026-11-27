@@ -10,6 +10,7 @@
 import {
   generateEmployeeScheduleForMonth,
   balanceSectorSundayLunchSlots,
+  ensureStandardScheduleRules,
 } from "./scheduleEngine.js";
 
 export function buildInitialErpDatabase() {
@@ -306,7 +307,7 @@ export function buildInitialErpDatabase() {
     },
   ];
 
-  const scheduleRules = [
+  const scheduleRules = ensureStandardScheduleRules([
     {
       id: "RULE_5X1",
       code: "5X1",
@@ -316,6 +317,7 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 5,
       restDaysInCycle: 1,
       allowedRestDows: [],
+      fixedRestDows: [],
       maxConsecutiveWorkDays: 5,
       requiresSundayLunchSlot: true,
       closedMarketCountsAsRest: false,
@@ -330,6 +332,7 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 5,
       restDaysInCycle: 2,
       allowedRestDows: [6, 0],
+      fixedRestDows: [6, 0],
       fixedWeekdays: true,
       maxConsecutiveWorkDays: 5,
       requiresSundayLunchSlot: false,
@@ -345,6 +348,7 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 6,
       restDaysInCycle: 1,
       allowedRestDows: [0],
+      fixedRestDows: [0],
       maxConsecutiveWorkDays: 6,
       requiresSundayLunchSlot: true,
       closedMarketCountsAsRest: true,
@@ -359,6 +363,7 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 6,
       restDaysInCycle: 1,
       allowedRestDows: [0, 1],
+      fixedRestDows: [],
       maxConsecutiveWorkDays: 7,
       requiresSundayLunchSlot: true,
       closedMarketCountsAsRest: false,
@@ -373,6 +378,7 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 6,
       restDaysInCycle: 1,
       allowedRestDows: [6, 0],
+      fixedRestDows: [],
       maxConsecutiveWorkDays: 7,
       requiresSundayLunchSlot: true,
       closedMarketCountsAsRest: false,
@@ -387,12 +393,13 @@ export function buildInitialErpDatabase() {
       workDaysInCycle: 6,
       restDaysInCycle: 1,
       allowedRestDows: [6, 0, 1],
+      fixedRestDows: [],
       maxConsecutiveWorkDays: 7,
       requiresSundayLunchSlot: true,
       closedMarketCountsAsRest: false,
       effectiveFrom: "2026-01-01",
     },
-  ];
+  ]);
 
   // Catálogo de Funções (Roles)
   const roles = [

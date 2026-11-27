@@ -126,16 +126,22 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   padding: 6px 8px;
   border: none;
   background: transparent;
   color: var(--erp-sidebar-muted);
   font-size: var(--erp-text-xs);
   font-weight: 700;
+  line-height: 1.25;
   letter-spacing: 0.04em;
+  text-align: left;
   text-transform: uppercase;
   cursor: pointer;
   border-radius: var(--erp-radius-sm);
+}
+.erp-nav-group-btn svg {
+  flex-shrink: 0;
 }
 .erp-nav-group-btn:hover {
   color: var(--erp-sidebar-text);

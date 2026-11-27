@@ -59,3 +59,16 @@ test("NAV-03: Breadcrumb e resolução de itens funcionam para todos os itens e 
   assert.equal(findNavItem("organization").item.id, "org_companies");
   assert.equal(findNavItem("admin").item.id, "admin_audit");
 });
+
+test("NAV-04: Quadro de postos e vagas fica ao final de Estrutura organizacional após Funções e cargos e sem duplicação", () => {
+  const orgGroup = NAV_GROUPS.find((g) => g.id === "organization");
+  assert.ok(orgGroup, "Grupo Estrutura organizacional deve existir");
+  const orgIds = orgGroup.items.map((i) => i.id);
+  assert.equal(orgIds[orgIds.length - 2], "org_roles");
+  assert.equal(orgIds[orgIds.length - 1], "positions");
+
+  const allPositionsItems = NAV_GROUPS.flatMap((g) => g.items).filter(
+    (i) => i.id === "positions" || i.moduleKey === "positions"
+  );
+  assert.equal(allPositionsItems.length, 1, "Quadro de postos e vagas não pode estar duplicado");
+});

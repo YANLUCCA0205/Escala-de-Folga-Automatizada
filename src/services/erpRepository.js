@@ -15,6 +15,7 @@ import {
   diffChangedPartitions,
   partitionKey,
 } from "./partitionCodec.js";
+import { ensureStandardScheduleRules } from "../domain/scheduleEngine.js";
 
 // Chaves legadas inseguras que são ativamente expurgadas do navegador
 const LEGACY_INSECURE_KEYS = [
@@ -635,6 +636,9 @@ export class ErpRepository {
     }
 
     const { db, revisionsByKey } = assembleDatabaseFromPartitions(partRows || []);
+    if (Array.isArray(db.scheduleRules) && db.scheduleRules.length > 0) {
+      db.scheduleRules = ensureStandardScheduleRules(db.scheduleRules, db.deletedEntityIds);
+    }
     // Baseline canônico gerado pela mesma função determinística usada em saveMutation,
     // garantindo que apenas partições efetivamente alteradas no estado entrem no diff.
     const baselinePartitionsMap = splitDatabaseIntoPartitions(db);

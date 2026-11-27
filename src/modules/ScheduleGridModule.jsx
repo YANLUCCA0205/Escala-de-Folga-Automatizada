@@ -16,6 +16,7 @@ import {
   projectNextMonthFirstRestDate,
   isCellModificationNoOp,
   evaluateBilateralRestSwap,
+  validateManualCellEdit,
   detectFutureScheduleImpact,
   validateMonthlyScheduleChecklist,
   getActiveAllocationOnDate,
@@ -65,6 +66,7 @@ export default function ScheduleGridModule({
   syncStatus = "idle",
   onMutateDb,
   onNavigate,
+  onNotify = null,
 }) {
   // Filtros e modos visuais (Seção 10)
   const [filterSectorId, setFilterSectorId] = useState("");
@@ -97,6 +99,15 @@ export default function ScheduleGridModule({
   const [reopenModalOpen, setReopenModalOpen] = useState(false);
   const [reopenReasonText, setReopenReasonText] = useState("");
   const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [validationNotice, setValidationNotice] = useState("");
+
+  const notifyBlocked = useCallback(
+    (message) => {
+      setValidationNotice(message);
+      if (onNotify) onNotify(message, "err");
+    },
+    [onNotify]
+  );
 
   const prevYearMonth = useMemo(() => getPreviousYearMonth(selectedYearMonth), [selectedYearMonth]);
   const nextYearMonth = useMemo(() => getNextYearMonth(selectedYearMonth), [selectedYearMonth]);
@@ -230,6 +241,7 @@ export default function ScheduleGridModule({
         yearMonth: selectedYearMonth,
         employees: db.employees,
         allocations: db.allocations,
+        ruleAssignments: db.ruleAssignments || [],
         rulesById,
         shiftsById,
         sectorsById,
@@ -245,6 +257,7 @@ export default function ScheduleGridModule({
       selectedYearMonth,
       db.employees,
       db.allocations,
+      db.ruleAssignments,
       rulesById,
       shiftsById,
       sectorsById,
@@ -349,28 +362,7 @@ export default function ScheduleGridModule({
     if (isLockedPublished) return;
     pushUndoSnapshot("Gerar Escala com Continuidade");
 
-    // Pré-avalia quantos lançamentos da unidade existem e quantos estão marcados como MANUAL_OVERRIDE
-    const existingUnitEntries = monthEntries.filter(
-      (e) => !e.unitId || e.unitId === selectedUnitId
-    );
-    const hasEmptyCells = existingUnitEntries.some((e) => e.status === "EMPTY");
-    const nonEmptyManualEntries = existingUnitEntries.filter(
-      (e) =>
-        e.origin === "MANUAL_OVERRIDE" &&
-        !["EMPTY", "V", "LM", "INSS", "ADM", "DEM", "FECHADO"].includes(e.status)
-    );
-    const totalOperationalEntries = existingUnitEntries.filter(
-      (e) => !["V", "LM", "INSS", "ADM", "DEM", "FECHADO"].includes(e.status)
-    );
-
-    // Se a grade foi convertida integralmente em rascunho manual (CONVERT_DRAFT / COPY)
-    // e não há células vazias pendentes, preservar 100% das células congelaria a geração.
-    const allConvertedToManual =
-      !hasEmptyCells &&
-      totalOperationalEntries.length > 0 &&
-      nonEmptyManualEntries.length >= Math.floor(totalOperationalEntries.length * 0.85);
-
-    const initialPreserve = preserveManual && !allConvertedToManual;
+    const initialPreserve = Boolean(preserveManual);
 
     // Simula a geração para medir quantas células mudam e exibir resumo operacional preciso
     const computeGenerationForDraft = (draft, shouldPreserve) => {
@@ -472,17 +464,7 @@ export default function ScheduleGridModule({
       };
     };
 
-    // Pré-calcula sobre o estado atual para determinar o resumo e se há necessidade de fallback integral
-    let previewResult = computeGenerationForDraft(db, initialPreserve);
-    if (
-      initialPreserve &&
-      previewResult.changedCellsCount === 0 &&
-      nonEmptyManualEntries.length > 0
-    ) {
-      // Quando os únicos desvios da grade em relação ao motor são células manuais anteriores,
-      // recalcula integralmente a continuidade de prevYearMonth (mantendo snapshot no botão Desfazer).
-      previewResult = computeGenerationForDraft(db, false);
-    }
+    const previewResult = computeGenerationForDraft(db, initialPreserve);
 
     const summaryText =
       previewResult.changedCellsCount > 0
@@ -557,6 +539,24 @@ export default function ScheduleGridModule({
       ) {
         return;
       }
+
+      const nextStatusCandidate = targetStatus !== null ? targetStatus : curStatus;
+      if (!restoreAuto && nextStatusCandidate !== "EMPTY") {
+        const editValidation = validateManualCellEdit({
+          employee: emp,
+          isoDate,
+          targetStatus: nextStatusCandidate,
+          allocations: db.allocations,
+          ruleAssignments: db.ruleAssignments || [],
+          rulesById,
+          marketCalendarByDate,
+        });
+        if (!editValidation.allowed) {
+          notifyBlocked(editValidation.message);
+          return;
+        }
+      }
+      setValidationNotice("");
 
       if (!skipUndoSnapshot) {
         pushUndoSnapshot(`Edição ${emp.fullName} (${isoDate})`);
@@ -697,6 +697,9 @@ export default function ScheduleGridModule({
       entriesByEmpDate,
       pushUndoSnapshot,
       marketCalendarByDate,
+      db.allocations,
+      db.ruleAssignments,
+      notifyBlocked,
       onMutateDb,
       selectedUnitId,
       selectedYearMonth,
@@ -1089,6 +1092,13 @@ export default function ScheduleGridModule({
       marketCalendarByDate,
     });
 
+    if (!previewSwap.allowed) {
+      notifyBlocked(
+        previewSwap.blockedReason || "Troca bilateral não permitida pela regra vigente."
+      );
+      return;
+    }
+
     if (
       previewSwap.hasShiftPeriodMismatch &&
       typeof window !== "undefined" &&
@@ -1099,6 +1109,7 @@ export default function ScheduleGridModule({
       return;
     }
 
+    setValidationNotice("");
     pushUndoSnapshot(`Troca ${targetEmp.fullName} ↔ ${candidateEmp.fullName}`);
 
     onMutateDb({
@@ -1418,6 +1429,40 @@ export default function ScheduleGridModule({
       onMouseUp={() => setIsMousePainting(false)}
     >
       {/* 1. CABEÇALHO OPERACIONAL COMPACTO */}
+      {validationNotice && (
+        <div
+          role="alert"
+          className="no-print"
+          style={{
+            padding: "9px 14px",
+            borderRadius: 8,
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            color: "#991b1b",
+            fontSize: 12,
+            fontWeight: 600,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <span>{validationNotice}</span>
+          <button
+            type="button"
+            onClick={() => setValidationNotice("")}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "#991b1b",
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            Fechar
+          </button>
+        </div>
+      )}
       <div
         className="erp-surface no-print"
         style={{
@@ -2774,34 +2819,98 @@ export default function ScheduleGridModule({
                       { code: "A", label: "🟣 Folga Adicional (A)" },
                       { code: "MEIO_EXP", label: "🟡 Meio Expediente" },
                       { code: "EMPTY", label: "🗑️ Excluir / Limpar Dia (—)" },
-                    ].map((opt) => (
-                      <button
-                        key={opt.code}
-                        onClick={() => {
-                          applyCellModification({
-                            emp,
-                            pos,
-                            isoDate,
-                            targetStatus: opt.code,
-                          });
-                          setCellPopover(null);
-                        }}
+                    ].map((opt) => {
+                      const checkOpt =
+                        opt.code === "EMPTY"
+                          ? { allowed: true }
+                          : validateManualCellEdit({
+                              employee: emp,
+                              isoDate,
+                              targetStatus: opt.code,
+                              allocations: db.allocations,
+                              ruleAssignments: db.ruleAssignments || [],
+                              rulesById,
+                              marketCalendarByDate,
+                            });
+                      return (
+                        <button
+                          key={opt.code}
+                          type="button"
+                          disabled={!checkOpt.allowed}
+                          title={!checkOpt.allowed ? checkOpt.message : undefined}
+                          onClick={() => {
+                            if (!checkOpt.allowed) {
+                              notifyBlocked(checkOpt.message);
+                              return;
+                            }
+                            applyCellModification({
+                              emp,
+                              pos,
+                              isoDate,
+                              targetStatus: opt.code,
+                            });
+                            setCellPopover(null);
+                          }}
+                          style={{
+                            padding: "7px 8px",
+                            fontSize: 11,
+                            fontWeight: curStatus === opt.code ? 800 : 600,
+                            borderRadius: 6,
+                            border:
+                              curStatus === opt.code ? "2px solid #0f172a" : "1px solid #cbd5e1",
+                            background: curStatus === opt.code ? "#e2e8f0" : "#fff",
+                            cursor: checkOpt.allowed ? "pointer" : "not-allowed",
+                            opacity: checkOpt.allowed ? 1 : 0.48,
+                            textAlign: "left",
+                          }}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(() => {
+                    const restCheck = validateManualCellEdit({
+                      employee: emp,
+                      isoDate,
+                      targetStatus: "F",
+                      allocations: db.allocations,
+                      ruleAssignments: db.ruleAssignments || [],
+                      rulesById,
+                      marketCalendarByDate,
+                    });
+                    const workCheck = validateManualCellEdit({
+                      employee: emp,
+                      isoDate,
+                      targetStatus: "T",
+                      allocations: db.allocations,
+                      ruleAssignments: db.ruleAssignments || [],
+                      rulesById,
+                      marketCalendarByDate,
+                    });
+                    const blockMsg = !workCheck.allowed
+                      ? workCheck.message
+                      : !restCheck.allowed
+                        ? restCheck.message
+                        : null;
+                    if (!blockMsg) return null;
+                    return (
+                      <div
                         style={{
-                          padding: "7px 8px",
-                          fontSize: 11,
-                          fontWeight: curStatus === opt.code ? 800 : 600,
+                          marginTop: 6,
+                          padding: "6px 8px",
                           borderRadius: 6,
-                          border:
-                            curStatus === opt.code ? "2px solid #0f172a" : "1px solid #cbd5e1",
-                          background: curStatus === opt.code ? "#e2e8f0" : "#fff",
-                          cursor: "pointer",
-                          textAlign: "left",
+                          background: "#fef2f2",
+                          border: "1px solid #fecaca",
+                          color: "#991b1b",
+                          fontSize: 10.5,
+                          fontWeight: 600,
                         }}
                       >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                        {blockMsg}
+                      </div>
+                    );
+                  })()}
 
                   {/* Seletor Independente de Faixa de Almoço aos Domingos e Feriados */}
                   {isSunOrHoliday && (

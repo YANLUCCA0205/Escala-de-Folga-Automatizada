@@ -28,6 +28,7 @@ import {
 } from "./totp.mjs";
 import { evaluatePassword } from "../src/domain/passwordPolicy.js";
 import { upgradeDatabaseToV8 } from "../src/services/erpRepository.js";
+import { ensureStandardScheduleRules } from "../src/domain/scheduleEngine.js";
 import {
   splitDatabaseIntoPartitions,
   verifyPartitionRoundtrip,
@@ -252,6 +253,31 @@ export async function createErpBackend({
               ]
             );
           }
+        }
+      }
+    }
+
+    // 2.1 Garante de forma não destrutiva as novas regras padrão 5x2 caso GLOBAL/rules já exista
+    const rulesRowRes = await db.query(
+      "select data from public.erp_partitions where scope = 'GLOBAL' and kind = 'rules' and period = ''"
+    );
+    if (rulesRowRes.rows.length > 0) {
+      const rulesData = rulesRowRes.rows[0].data || {};
+      const existingRules = Array.isArray(rulesData.scheduleRules) ? rulesData.scheduleRules : [];
+      if (existingRules.length > 0) {
+        const structRes = await db.query(
+          "select data from public.erp_partitions where scope = 'GLOBAL' and kind = 'structure' and period = ''"
+        );
+        const deletedIds = structRes.rows[0]?.data?.deletedEntityIds || [];
+        const enrichedRules = ensureStandardScheduleRules(existingRules, deletedIds);
+        if (enrichedRules.length !== existingRules.length) {
+          await db.query(
+            `update public.erp_partitions
+                set data = $1::jsonb,
+                    updated_at = now()
+              where scope = 'GLOBAL' and kind = 'rules' and period = ''`,
+            [JSON.stringify({ ...rulesData, scheduleRules: enrichedRules })]
+          );
         }
       }
     }

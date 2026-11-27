@@ -132,9 +132,78 @@ test("UI-01..03: Telas de autenticação corporativa e AppShell renderizam via V
     assert.ok(shellHtml.includes('aria-current="page"'));
     assert.ok(shellHtml.includes("Planejamento operacional"));
     assert.ok(shellHtml.includes("Escalas mensais"));
+    assert.ok(shellHtml.includes("Quadro de postos e vagas"));
     assert.equal(shellHtml.includes("Usuários e acessos"), false);
     assert.equal(shellHtml.includes("Backup e recuperação"), false);
     assert.equal(shellHtml.includes("Alvorada Claro"), false);
+
+    // 4. RulesShiftsAndCalendarModule renderiza com nomenclatura simplificada e sem jargões técnicos removidos
+    const { default: RulesShiftsAndCalendarModule } = await vite.ssrLoadModule(
+      "/src/modules/RulesShiftsAndCalendarModule.jsx"
+    );
+    const { buildFictitiousErpDatabase } = await import(
+      "../../scripts/tutorial-generator/security/fictitiousSeed.js"
+    );
+    const fictDb = buildFictitiousErpDatabase();
+    const rulesHtml = renderToStaticMarkup(
+      createElement(RulesShiftsAndCalendarModule, {
+        db: fictDb,
+        selectedUnitId: fictDb.units[0]?.id || "LOJA_03",
+        initialTab: "rules",
+        onMutateDb: () => {},
+      })
+    );
+
+    const forbiddenJargon = [
+      "CRUD 8 Colunas",
+      "Cálculo Aritmético Ativo",
+      "8 Colunas Ativas no Motor",
+      "Motor Central",
+      "Modo Simples",
+      "Modo Avançado",
+      "Calcular Carga Base e Complemento Automaticamente",
+      "Cálculo do Motor em Tempo Real",
+    ];
+    for (const term of forbiddenJargon) {
+      assert.equal(
+        rulesHtml.includes(term),
+        false,
+        `Texto técnico "${term}" não deve mais constar na interface`
+      );
+    }
+    assert.ok(rulesHtml.includes("Regras de escala"));
+    assert.ok(rulesHtml.includes("Jornadas contratuais"));
+    assert.ok(rulesHtml.includes("Cadastrar / Editar regra de escala"));
+    assert.ok(rulesHtml.includes("Regras de escala cadastradas"));
+    assert.ok(rulesHtml.includes("Alteração de regra de escala"));
+    assert.ok(rulesHtml.includes("Dias de folga fixa na geração automática"));
+
+    const shiftsHtml = renderToStaticMarkup(
+      createElement(RulesShiftsAndCalendarModule, {
+        db: fictDb,
+        selectedUnitId: fictDb.units[0]?.id || "LOJA_03",
+        initialTab: "shifts",
+        onMutateDb: () => {},
+      })
+    );
+    assert.ok(shiftsHtml.includes("Cadastrar / Editar jornada contratual"));
+    assert.ok(shiftsHtml.includes("Jornadas contratuais cadastradas"));
+    assert.ok(shiftsHtml.includes(">01<"));
+    assert.ok(shiftsHtml.includes(">05<"));
+    assert.ok(shiftsHtml.includes(">07<"));
+    assert.equal(shiftsHtml.includes("C.H. Contratual"), false);
+    assert.equal(shiftsHtml.includes("Calcular Carga Base"), false);
+    assert.equal(shiftsHtml.includes("Cálculo do Motor em Tempo Real"), false);
+
+    const calendarHtml = renderToStaticMarkup(
+      createElement(RulesShiftsAndCalendarModule, {
+        db: fictDb,
+        selectedUnitId: fictDb.units[0]?.id || "LOJA_03",
+        initialTab: "calendar",
+        onMutateDb: () => {},
+      })
+    );
+    assert.ok(calendarHtml.includes("Calendário operacional"));
   } finally {
     await vite.close();
   }
